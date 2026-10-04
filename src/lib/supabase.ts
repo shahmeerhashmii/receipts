@@ -62,6 +62,21 @@ export async function lookupLeagueByCode(
   return (data as { id: string; name: string }[])?.[0] ?? null;
 }
 
+export async function rpcAddLeagueGame(
+  leagueId: string,
+  gameId: string,
+  name: string,
+  type: '1v1' | 'puzzle' | 'ffa',
+): Promise<void> {
+  const { error } = await supabase.rpc('rpc_add_league_game', {
+    p_league_id: leagueId,
+    p_game_id:   gameId,
+    p_name:      name,
+    p_type:      type,
+  });
+  if (error) throw error;
+}
+
 // ---- Match RPCs ---------------------------------------------------------
 
 export async function rpcLogMatch(params: {

@@ -253,6 +253,7 @@ CREATE TABLE IF NOT EXISTS off_the_books_scores (
 -- ROW LEVEL SECURITY
 -- ============================================================
 
+ALTER TABLE games                  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE leagues                ENABLE ROW LEVEL SECURITY;
 ALTER TABLE league_members         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE league_games           ENABLE ROW LEVEL SECURITY;
@@ -393,12 +394,51 @@ CREATE POLICY "otb_scores_select" ON off_the_books_scores FOR SELECT
     WHERE r.id = result_id AND is_league_member(r.league_id, auth.uid())
   ));
 
+-- games: any signed-in user can read (global lookup table).
+-- No direct INSERT/UPDATE/DELETE -- all writes go through SECURITY DEFINER RPCs
+-- (rpc_create_league seeds the built-in rows; rpc_add_league_game adds custom ones).
+CREATE POLICY "games_select" ON games FOR SELECT
+  USING (auth.uid() IS NOT NULL);
+
 -- ============================================================
 -- JOIN CODE LOOKUP (public -- safe, no table exposure)
 -- ============================================================
 CREATE OR REPLACE FUNCTION lookup_league_by_code(p_code TEXT)
 RETURNS TABLE (id UUID, name TEXT) LANGUAGE sql SECURITY DEFINER STABLE AS $$
   SELECT id, name FROM leagues WHERE upper(join_code) = upper(p_code);
+$$;
+
+-- ============================================================
+-- RPC: rpc_add_league_game
+-- Admin-only: inserts a custom game row and links it to the league.
+-- Idempotent: ON CONFLICT DO NOTHING on both tables.
+-- ============================================================
+CREATE OR REPLACE FUNCTION rpc_add_league_game(
+  p_league_id UUID,
+  p_game_id   TEXT,    -- caller-supplied slug, e.g. 'gp_darts'
+  p_name      TEXT,
+  p_type      TEXT     -- '1v1' | 'puzzle' | 'ffa'
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  IF NOT is_league_admin(p_league_id, auth.uid()) THEN
+    RAISE EXCEPTION 'not_admin';
+  END IF;
+
+  IF p_type NOT IN ('1v1', 'puzzle', 'ffa') THEN
+    RAISE EXCEPTION 'invalid_type';
+  END IF;
+
+  -- Upsert the game row (is_custom = TRUE; ON CONFLICT DO NOTHING so built-in
+  -- games cannot be overwritten even if someone reuses their id)
+  INSERT INTO games (id, name, type, is_custom)
+  VALUES (p_game_id, p_name, p_type, TRUE)
+  ON CONFLICT (id) DO NOTHING;
+
+  -- Link it to this league (idempotent)
+  INSERT INTO league_games (league_id, game_id)
+  VALUES (p_league_id, p_game_id)
+  ON CONFLICT DO NOTHING;
+END;
 $$;
 
 -- ============================================================
