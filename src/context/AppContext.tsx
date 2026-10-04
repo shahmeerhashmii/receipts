@@ -84,15 +84,26 @@ export interface Actions {
   claimBankruptcyRelief: (leagueId: string) => Promise<void>;
 }
 
+// Startup status used by App.tsx to decide which screen to render.
+// 'loading'  - waiting for auth + initial data fetch (show spinner)
+// 'error'    - startup failed (show error screen)
+// 'welcome'  - auth ok, zero leagues (show welcome / onboarding)
+// 'ready'    - auth ok, at least one league loaded (show app shell)
+export type StartupStatus = 'loading' | 'error' | 'welcome' | 'ready';
+
 interface AppContextType {
   isDemo: boolean;
   isLive: boolean;
+  startupStatus: StartupStatus;
+  startupError: string | null;
   state: DemoState;
   currentLeague: League | null;
   currentMember: LeagueMember | null;
   memberStats: MemberStats[];
   refresh: () => void;
   switchLeague: (id: string) => void;
+  /** Live mode: called by OnboardingScreen after create/join to inject fresh league data. */
+  setLiveLeagues: (leagues: League[], currentUserId: string, currentLeagueId: string) => void;
   actions: Actions;
   // Navigation helpers
   viewProfile: (memberId: string) => void;
@@ -106,6 +117,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // In live mode, start from a blank slate - never read demo localStorage data.
   const [state, setState] = useState<DemoState>(() => IS_DEMO ? demoStore.getState() : EMPTY_STATE);
   const [viewingMemberId, setViewingMemberId] = useState<string | null>(null);
+  // Demo mode is always 'ready' immediately; live mode starts 'loading'.
+  const [startupStatus, setStartupStatus] = useState<StartupStatus>(IS_DEMO ? 'ready' : 'loading');
+  const [startupError, setStartupError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     if (IS_DEMO) setState({ ...demoStore.getState() });
@@ -114,6 +128,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const viewProfile = useCallback((memberId: string) => setViewingMemberId(memberId), []);
   const clearProfile = useCallback(() => setViewingMemberId(null), []);
 
+  // Demo mode: subscribe to store changes
   useEffect(() => {
     if (IS_DEMO) {
       const unsub = demoStore.subscribe(() => {
@@ -122,6 +137,172 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return unsub;
     }
   }, []);
+
+  // Live mode: auth + data startup sequence
+  useEffect(() => {
+    if (IS_DEMO) return;
+
+    const TIMEOUT_MS = 10_000;
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    async function startup() {
+      try {
+        console.log('[Receipts] startup: begin');
+
+        timeoutId = setTimeout(() => {
+          if (!cancelled) {
+            console.error('[Receipts] startup: timed out after 10s');
+            setStartupError('Startup timed out. Check your connection and try again.');
+            setStartupStatus('error');
+          }
+        }, TIMEOUT_MS);
+
+        const { supabase } = await getSupabase();
+
+        // Step 1: auth
+        console.log('[Receipts] startup: checking auth session');
+        let { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) throw sessionError;
+
+        if (!session) {
+          console.log('[Receipts] startup: no session, signing in anonymously');
+          const { data, error: signInError } = await supabase.auth.signInAnonymously();
+          if (signInError) throw signInError;
+          session = data.session;
+        }
+
+        if (!session?.user) throw new Error('Auth succeeded but no user object returned.');
+        const userId = session.user.id;
+        console.log('[Receipts] startup: authenticated as', userId);
+
+        // Step 2: fetch leagues this user belongs to
+        console.log('[Receipts] startup: fetching leagues');
+        const { data: memberRows, error: memberError } = await supabase
+          .from('league_members')
+          .select(`
+            league_id, display_name, avatar_color, avatar_url, coins, is_admin, joined_at,
+            leagues ( id, name, join_code, fifa_version, created_at,
+              games ( id, name, type, is_custom ),
+              league_members ( id, display_name, avatar_color, avatar_url, coins, is_admin, joined_at )
+            )
+          `)
+          .eq('user_id', userId);
+        if (memberError) throw memberError;
+
+        if (cancelled) return;
+
+        console.log('[Receipts] startup: fetched', memberRows?.length ?? 0, 'league memberships');
+
+        if (!memberRows || memberRows.length === 0) {
+          // New user with no leagues - show welcome screen
+          console.log('[Receipts] startup: zero leagues, showing welcome screen');
+          setState((s) => ({ ...s, currentUserId: userId, initialized: true }));
+          if (timeoutId) clearTimeout(timeoutId);
+          setStartupStatus('welcome');
+          return;
+        }
+
+        // Build league objects from the nested query
+        const leagues: League[] = memberRows
+          .map((row: Record<string, unknown>) => {
+            const lg = row.leagues as Record<string, unknown> | null;
+            if (!lg) return null;
+            return {
+              id: lg.id as string,
+              name: lg.name as string,
+              join_code: lg.join_code as string,
+              fifa_version: (lg.fifa_version as string | null) ?? undefined,
+              created_at: lg.created_at as string,
+              games: (lg.games as Array<{ id: string; name: string; type: '1v1' | 'puzzle' | 'ffa'; is_custom?: boolean }>) ?? [],
+              members: (lg.league_members as Array<{
+                id: string; display_name: string; avatar_color: string;
+                avatar_url?: string; coins: number; is_admin: boolean; joined_at: string;
+              }>) ?? [],
+            } as League;
+          })
+          .filter(Boolean) as League[];
+
+        // Deduplicate by league id (user may appear in query multiple times)
+        const seen = new Set<string>();
+        const uniqueLeagues = leagues.filter((l) => {
+          if (seen.has(l.id)) return false;
+          seen.add(l.id);
+          return true;
+        });
+
+        const currentLeagueId = uniqueLeagues[0]?.id ?? '';
+        console.log('[Receipts] startup: current league', currentLeagueId);
+
+        setState((s) => ({
+          ...s,
+          leagues: uniqueLeagues,
+          currentUserId: userId,
+          currentLeagueId,
+          initialized: true,
+        }));
+
+        if (timeoutId) clearTimeout(timeoutId);
+        console.log('[Receipts] startup: ready');
+        setStartupStatus('ready');
+
+        // Realtime subscription is set up after status is 'ready'
+        // (handled by a separate effect below)
+
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[Receipts] startup: failed -', msg);
+        if (timeoutId) clearTimeout(timeoutId);
+        setStartupError(msg);
+        setStartupStatus('error');
+      }
+    }
+
+    startup();
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Live mode: subscribe to Realtime for the current league AFTER startup is ready
+  useEffect(() => {
+    if (IS_DEMO || startupStatus !== 'ready') return;
+    const currentLeagueId = state.currentLeagueId;
+    if (!currentLeagueId) return;
+
+    console.log('[Receipts] realtime: subscribing to league', currentLeagueId);
+
+    let unsubscribe: (() => void) | null = null;
+    getSupabase().then(({ subscribeToLeague }) => {
+      unsubscribe = subscribeToLeague(currentLeagueId, () => {
+        // On any change, refetch the league members (minimal refresh)
+        getSupabase().then(({ supabase }) => {
+          supabase
+            .from('league_members')
+            .select('id, display_name, avatar_color, avatar_url, coins, is_admin, joined_at')
+            .eq('league_id', currentLeagueId)
+            .then(({ data }) => {
+              if (!data) return;
+              setState((s) => ({
+                ...s,
+                leagues: s.leagues.map((l) =>
+                  l.id === currentLeagueId ? { ...l, members: data as League['members'] } : l
+                ),
+              }));
+            });
+        });
+      });
+      console.log('[Receipts] realtime: subscribed');
+    });
+
+    return () => {
+      console.log('[Receipts] realtime: unsubscribing from league', currentLeagueId);
+      unsubscribe?.();
+    };
+  }, [startupStatus, state.currentLeagueId]);
 
   // Fake friend activity in demo mode every 20s
   useEffect(() => {
@@ -163,8 +344,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const memberStats = (IS_DEMO && currentLeague) ? demoStore.computeMemberStats(currentLeague.id) : [];
 
   const switchLeague = useCallback((id: string) => {
-    if (IS_DEMO) demoStore.switchLeague(id);
+    if (IS_DEMO) {
+      demoStore.switchLeague(id);
+    } else {
+      setState((s) => ({ ...s, currentLeagueId: id }));
+    }
     setViewingMemberId(null);
+  }, []);
+
+  const setLiveLeagues = useCallback((
+    leagues: League[],
+    currentUserId: string,
+    currentLeagueId: string,
+  ) => {
+    setState((s) => ({ ...s, leagues, currentUserId, currentLeagueId, initialized: true }));
   }, []);
 
   // Unified actions: demo mode uses demoStore; production calls Supabase RPCs
@@ -351,12 +544,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     },
   };
 
+  // When a new league is added (after create/join in live mode), re-derive status
+  useEffect(() => {
+    if (IS_DEMO) return;
+    if (startupStatus === 'welcome' && state.leagues.length > 0) {
+      console.log('[Receipts] first league added, transitioning to ready');
+      setStartupStatus('ready');
+    }
+  }, [state.leagues.length, startupStatus]);
+
   return (
     <AppContext.Provider
       value={{
         isDemo: IS_DEMO, isLive: !IS_DEMO,
+        startupStatus, startupError,
         state, currentLeague, currentMember, memberStats,
-        refresh, switchLeague, actions,
+        refresh, switchLeague, setLiveLeagues, actions,
         viewProfile, clearProfile, viewingMemberId,
       }}
     >
