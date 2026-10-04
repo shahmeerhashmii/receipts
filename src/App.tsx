@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AppProvider, useApp } from './context/AppContext';
+import { AppProvider, useApp, type StartupError } from './context/AppContext';
 import { RankingsScreen } from './screens/RankingsScreen';
 import { CrewfolioScreen } from './screens/CrewfolioScreen';
 import { MatchesScreen } from './screens/MatchesScreen';
@@ -27,11 +27,37 @@ type Screen = 'rankings' | 'crewfolio' | 'matches' | 'events' | 'feed' | 'profil
 // --------------------------------------------------------------------------
 // Error screen
 // --------------------------------------------------------------------------
-function StartupErrorScreen({ error, onRetry }: { error: string; onRetry: () => void }) {
+function ErrorField({ label, value }: { label: string; value: string | null }) {
+  if (!value) return null;
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 13, color: 'var(--text)', wordBreak: 'break-word', fontFamily: 'var(--font-mono)' }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function formatErrorForCopy(err: StartupError): string {
+  const lines: string[] = [
+    `Step:    ${err.step}`,
+    `Target:  ${err.target}`,
+    `Message: ${err.message}`,
+  ];
+  if (err.code)    lines.push(`Code:    ${err.code}`);
+  if (err.details) lines.push(`Details: ${err.details}`);
+  if (err.hint)    lines.push(`Hint:    ${err.hint}`);
+  return lines.join('\n');
+}
+
+function StartupErrorScreen({ error, onRetry }: { error: StartupError; onRetry: () => void }) {
   const [copied, setCopied] = useState(false);
 
   function copyError() {
-    navigator.clipboard.writeText(error).then(() => {
+    navigator.clipboard.writeText(formatErrorForCopy(error)).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -54,15 +80,16 @@ function StartupErrorScreen({ error, onRetry }: { error: string; onRetry: () => 
         background: 'var(--surface)',
         border: '1px solid var(--border)',
         borderRadius: 10,
-        padding: '12px 16px',
-        fontSize: 13,
-        color: 'var(--muted)',
+        padding: '14px 16px',
         maxWidth: 340,
         width: '100%',
-        wordBreak: 'break-word',
-        fontFamily: 'var(--font-mono)',
       }}>
-        {error}
+        <ErrorField label="Step"    value={error.step} />
+        <ErrorField label="Where"   value={error.target} />
+        <ErrorField label="Message" value={error.message} />
+        <ErrorField label="Code"    value={error.code} />
+        <ErrorField label="Details" value={error.details} />
+        <ErrorField label="Hint"    value={error.hint} />
       </div>
       <div style={{ display: 'flex', gap: 10, width: '100%', maxWidth: 340 }}>
         <button className="btn btn-primary" style={{ flex: 1 }} onClick={onRetry}>
@@ -234,7 +261,11 @@ function AppRoot() {
   }
 
   if (startupStatus === 'error') {
-    return <StartupErrorScreen error={startupError ?? 'Unknown error'} onRetry={handleRetry} />;
+    const fallback: StartupError = {
+      step: 'startup', target: 'unknown',
+      message: 'Unknown error', code: null, details: null, hint: null,
+    };
+    return <StartupErrorScreen error={startupError ?? fallback} onRetry={handleRetry} />;
   }
 
   // /receipts/join/:CODE route - works in both demo and live mode

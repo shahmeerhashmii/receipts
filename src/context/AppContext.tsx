@@ -91,11 +91,37 @@ export interface Actions {
 // 'ready'    - auth ok, at least one league loaded (show app shell)
 export type StartupStatus = 'loading' | 'error' | 'welcome' | 'ready';
 
+// Structured startup error - never loses Supabase fields to String() coercion.
+export interface StartupError {
+  step: string;        // e.g. "auth", "leagues", "anon sign-in"
+  target: string;      // function or table name, e.g. "league_members"
+  message: string;
+  code: string | null;
+  details: string | null;
+  hint: string | null;
+}
+
+/** Extract every useful field from any thrown value (Error, Supabase PostgRESTError, plain object). */
+export function parseStartupError(step: string, target: string, err: unknown): StartupError {
+  if (err && typeof err === 'object') {
+    const e = err as Record<string, unknown>;
+    return {
+      step,
+      target,
+      message: (e['message'] as string | undefined) || 'Unknown error',
+      code:    (e['code']    as string | undefined) ?? null,
+      details: (e['details'] as string | undefined) ?? null,
+      hint:    (e['hint']    as string | undefined) ?? null,
+    };
+  }
+  return { step, target, message: String(err), code: null, details: null, hint: null };
+}
+
 interface AppContextType {
   isDemo: boolean;
   isLive: boolean;
   startupStatus: StartupStatus;
-  startupError: string | null;
+  startupError: StartupError | null;
   state: DemoState;
   currentLeague: League | null;
   currentMember: LeagueMember | null;
@@ -119,7 +145,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [viewingMemberId, setViewingMemberId] = useState<string | null>(null);
   // Demo mode is always 'ready' immediately; live mode starts 'loading'.
   const [startupStatus, setStartupStatus] = useState<StartupStatus>(IS_DEMO ? 'ready' : 'loading');
-  const [startupError, setStartupError] = useState<string | null>(null);
+  const [startupError, setStartupError] = useState<StartupError | null>(null);
 
   const refresh = useCallback(() => {
     if (IS_DEMO) setState({ ...demoStore.getState() });
@@ -153,31 +179,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         timeoutId = setTimeout(() => {
           if (!cancelled) {
             console.error('[Receipts] startup: timed out after 10s');
-            setStartupError('Startup timed out. Check your connection and try again.');
+            setStartupError({
+              step: 'startup', target: 'network',
+              message: 'Startup timed out after 10 seconds. Check your connection and try again.',
+              code: null, details: null, hint: null,
+            });
             setStartupStatus('error');
           }
         }, TIMEOUT_MS);
 
         const { supabase } = await getSupabase();
 
-        // Step 1: auth
+        // Step 1: auth - get existing session
         console.log('[Receipts] startup: checking auth session');
+        let currentStep = 'auth';
+        let currentTarget = 'supabase.auth.getSession';
         let { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) throw sessionError;
+        if (sessionError) throw parseStartupError(currentStep, currentTarget, sessionError);
 
         if (!session) {
+          // Step 1b: no existing session - sign in anonymously
           console.log('[Receipts] startup: no session, signing in anonymously');
+          currentStep = 'anon sign-in';
+          currentTarget = 'supabase.auth.signInAnonymously';
           const { data, error: signInError } = await supabase.auth.signInAnonymously();
-          if (signInError) throw signInError;
+          if (signInError) throw parseStartupError(currentStep, currentTarget, signInError);
           session = data.session;
         }
 
-        if (!session?.user) throw new Error('Auth succeeded but no user object returned.');
+        if (!session?.user) {
+          throw parseStartupError('auth', 'supabase.auth', 'Auth succeeded but no user object returned.');
+        }
         const userId = session.user.id;
         console.log('[Receipts] startup: authenticated as', userId);
 
         // Step 2: fetch leagues this user belongs to
         console.log('[Receipts] startup: fetching leagues');
+        currentStep = 'leagues';
+        currentTarget = 'league_members';
         const { data: memberRows, error: memberError } = await supabase
           .from('league_members')
           .select(`
@@ -188,7 +227,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             )
           `)
           .eq('user_id', userId);
-        if (memberError) throw memberError;
+        if (memberError) throw parseStartupError(currentStep, currentTarget, memberError);
 
         if (cancelled) return;
 
@@ -251,10 +290,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       } catch (err) {
         if (cancelled) return;
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[Receipts] startup: failed -', msg);
+        // err is already a StartupError if thrown by parseStartupError above,
+        // otherwise wrap it now (covers plain Error throws and unexpected values).
+        const structured: StartupError =
+          (err && typeof err === 'object' && 'step' in err)
+            ? (err as StartupError)
+            : parseStartupError('startup', 'unknown', err);
+        console.error('[Receipts] startup: failed -', structured.step, structured.target, structured.message);
         if (timeoutId) clearTimeout(timeoutId);
-        setStartupError(msg);
+        setStartupError(structured);
         setStartupStatus('error');
       }
     }
