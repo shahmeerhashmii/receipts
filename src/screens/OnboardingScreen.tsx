@@ -106,13 +106,16 @@ export function OnboardingScreen({ onComplete, prefilledCode }: OnboardingProps)
 
   async function refreshLeagues(userId: string) {
     const { supabase } = await import('../lib/supabase');
+    // games is accessed through league_games, not directly from leagues.
+    // We select user_id from league_members and map it to id for the app.
     const { data: memberRows, error } = await supabase
       .from('league_members')
       .select(`
         league_id, display_name, avatar_color, avatar_url, coins, is_admin, joined_at,
-        leagues ( id, name, join_code, fifa_version, created_at,
-          games ( id, name, type, is_custom ),
-          league_members ( id, display_name, avatar_color, avatar_url, coins, is_admin, joined_at )
+        leagues (
+          id, name, join_code, fifa_version, created_at,
+          league_games ( game:games ( id, name, type, is_custom ) ),
+          league_members ( user_id, display_name, avatar_color, avatar_url, coins, is_admin, joined_at )
         )
       `)
       .eq('user_id', userId);
@@ -127,10 +130,10 @@ export function OnboardingScreen({ onComplete, prefilledCode }: OnboardingProps)
       leagues: {
         id: string; name: string; join_code: string;
         fifa_version: string | null; created_at: string;
-        games: Array<{ id: string; name: string; type: '1v1' | 'puzzle' | 'ffa'; is_custom?: boolean }>;
+        league_games: Array<{ game: { id: string; name: string; type: string; is_custom: boolean } | null }>;
         league_members: Array<{
-          id: string; display_name: string; avatar_color: string;
-          avatar_url?: string; coins: number; is_admin: boolean; joined_at: string;
+          user_id: string; display_name: string; avatar_color: string;
+          avatar_url: string | null; coins: number; is_admin: boolean; joined_at: string;
         }>;
       } | null;
     };
@@ -145,8 +148,18 @@ export function OnboardingScreen({ onComplete, prefilledCode }: OnboardingProps)
           join_code: lg.join_code,
           fifa_version: lg.fifa_version ?? undefined,
           created_at: lg.created_at,
-          games: lg.games ?? [],
-          members: lg.league_members ?? [],
+          games: (lg.league_games ?? [])
+            .map((r) => r.game)
+            .filter(Boolean) as import('../demo/store').GameDef[],
+          members: (lg.league_members ?? []).map((m) => ({
+            id: m.user_id,
+            display_name: m.display_name,
+            avatar_color: m.avatar_color,
+            avatar_url: m.avatar_url ?? undefined,
+            coins: m.coins,
+            is_admin: m.is_admin,
+            joined_at: m.joined_at,
+          })),
         };
       })
       .filter(Boolean) as import('../demo/store').League[];

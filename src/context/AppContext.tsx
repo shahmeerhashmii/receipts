@@ -217,13 +217,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         console.log('[Receipts] startup: fetching leagues');
         currentStep = 'leagues';
         currentTarget = 'league_members';
+        // games is a global table linked via league_games (no direct FK from leagues to games).
+        // league_members.id is the row PK; user_id is the auth user. We alias user_id as id
+        // in the mapped objects because every screen uses member.id as the auth identifier.
         const { data: memberRows, error: memberError } = await supabase
           .from('league_members')
           .select(`
             league_id, display_name, avatar_color, avatar_url, coins, is_admin, joined_at,
-            leagues ( id, name, join_code, fifa_version, created_at,
-              games ( id, name, type, is_custom ),
-              league_members ( id, display_name, avatar_color, avatar_url, coins, is_admin, joined_at )
+            leagues (
+              id, name, join_code, fifa_version, created_at,
+              league_games ( game:games ( id, name, type, is_custom ) ),
+              league_members ( user_id, display_name, avatar_color, avatar_url, coins, is_admin, joined_at )
             )
           `)
           .eq('user_id', userId);
@@ -242,22 +246,46 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        // Build league objects from the nested query
-        const leagues: League[] = memberRows
-          .map((row: Record<string, unknown>) => {
-            const lg = row.leagues as Record<string, unknown> | null;
+        // Build league objects from the nested query.
+        // Supabase returns league_games as [{game: {id,name,type,is_custom}}] and
+        // league_members as [{user_id, display_name, ...}]. We flatten both.
+        type RawMemberRow = {
+          league_id: string;
+          leagues: {
+            id: string; name: string; join_code: string;
+            fifa_version: string | null; created_at: string;
+            league_games: Array<{ game: { id: string; name: string; type: string; is_custom: boolean } | null }>;
+            league_members: Array<{
+              user_id: string; display_name: string; avatar_color: string;
+              avatar_url: string | null; coins: number; is_admin: boolean; joined_at: string;
+            }>;
+          } | null;
+        };
+
+        const leagues: League[] = (memberRows as unknown as RawMemberRow[])
+          .map((row) => {
+            const lg = row.leagues;
             if (!lg) return null;
             return {
-              id: lg.id as string,
-              name: lg.name as string,
-              join_code: lg.join_code as string,
-              fifa_version: (lg.fifa_version as string | null) ?? undefined,
-              created_at: lg.created_at as string,
-              games: (lg.games as Array<{ id: string; name: string; type: '1v1' | 'puzzle' | 'ffa'; is_custom?: boolean }>) ?? [],
-              members: (lg.league_members as Array<{
-                id: string; display_name: string; avatar_color: string;
-                avatar_url?: string; coins: number; is_admin: boolean; joined_at: string;
-              }>) ?? [],
+              id: lg.id,
+              name: lg.name,
+              join_code: lg.join_code,
+              fifa_version: lg.fifa_version ?? undefined,
+              created_at: lg.created_at,
+              // Flatten league_games -> game objects
+              games: (lg.league_games ?? [])
+                .map((lg_row) => lg_row.game)
+                .filter(Boolean) as League['games'],
+              // Map user_id -> id so every screen can use member.id as the auth identifier
+              members: (lg.league_members ?? []).map((m) => ({
+                id: m.user_id,
+                display_name: m.display_name,
+                avatar_color: m.avatar_color,
+                avatar_url: m.avatar_url ?? undefined,
+                coins: m.coins,
+                is_admin: m.is_admin,
+                joined_at: m.joined_at,
+              })),
             } as League;
           })
           .filter(Boolean) as League[];
@@ -322,18 +350,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     let unsubscribe: (() => void) | null = null;
     getSupabase().then(({ subscribeToLeague }) => {
       unsubscribe = subscribeToLeague(currentLeagueId, () => {
-        // On any change, refetch the league members (minimal refresh)
+        // On any change, refetch the league members (minimal refresh).
+        // Select user_id (not id) and map it to id so member.id stays the auth UUID.
         getSupabase().then(({ supabase }) => {
           supabase
             .from('league_members')
-            .select('id, display_name, avatar_color, avatar_url, coins, is_admin, joined_at')
+            .select('user_id, display_name, avatar_color, avatar_url, coins, is_admin, joined_at')
             .eq('league_id', currentLeagueId)
             .then(({ data }) => {
               if (!data) return;
+              const members = (data as Array<{
+                user_id: string; display_name: string; avatar_color: string;
+                avatar_url: string | null; coins: number; is_admin: boolean; joined_at: string;
+              }>).map((m) => ({
+                id: m.user_id,
+                display_name: m.display_name,
+                avatar_color: m.avatar_color,
+                avatar_url: m.avatar_url ?? undefined,
+                coins: m.coins,
+                is_admin: m.is_admin,
+                joined_at: m.joined_at,
+              }));
               setState((s) => ({
                 ...s,
                 leagues: s.leagues.map((l) =>
-                  l.id === currentLeagueId ? { ...l, members: data as League['members'] } : l
+                  l.id === currentLeagueId ? { ...l, members } : l
                 ),
               }));
             });
