@@ -784,6 +784,69 @@ export const demoStore = {
     return newSub;
   },
 
+  leaveLeague: (leagueId: string, userId: string) => {
+    setState((s) => {
+      const leagues = s.leagues
+        .map((l) => l.id !== leagueId ? l : { ...l, members: l.members.filter((m) => m.id !== userId) })
+        .filter((l) => l.members.length > 0); // remove empty leagues
+      const currentLeagueId = leagues.find((l) => l.id === s.currentLeagueId)
+        ? s.currentLeagueId
+        : (leagues[0]?.id ?? '');
+      return { ...s, leagues, currentLeagueId };
+    });
+  },
+
+  removeMember: (leagueId: string, memberId: string) => {
+    setState((s) => ({
+      ...s,
+      leagues: s.leagues.map((l) =>
+        l.id !== leagueId ? l : { ...l, members: l.members.filter((m) => m.id !== memberId) }
+      ),
+    }));
+  },
+
+  renameLeague: (leagueId: string, name: string) => {
+    setState((s) => ({
+      ...s,
+      leagues: s.leagues.map((l) => l.id !== leagueId ? l : { ...l, name }),
+    }));
+  },
+
+  regenerateCode: (leagueId: string) => {
+    const newCode = generateJoinCode();
+    setState((s) => ({
+      ...s,
+      leagues: s.leagues.map((l) => l.id !== leagueId ? l : { ...l, join_code: newCode }),
+    }));
+    return newCode;
+  },
+
+  setFifaVersion: (leagueId: string, version: string) => {
+    setState((s) => ({
+      ...s,
+      leagues: s.leagues.map((l) => l.id !== leagueId ? l : { ...l, fifa_version: version }),
+    }));
+  },
+
+  updateProfile: (leagueId: string, userId: string, fields: { display_name?: string; avatar_color?: string; avatar_url?: string }) => {
+    setState((s) => ({
+      ...s,
+      leagues: s.leagues.map((l) =>
+        l.id !== leagueId ? l : {
+          ...l,
+          members: l.members.map((m) =>
+            m.id !== userId ? m : {
+              ...m,
+              display_name: fields.display_name ?? m.display_name,
+              avatar_color: fields.avatar_color ?? m.avatar_color,
+              avatar_url:   fields.avatar_url   ?? m.avatar_url,
+            }
+          ),
+        }
+      ),
+    }));
+  },
+
   reset: () => {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(LEGACY_STORAGE_KEY);

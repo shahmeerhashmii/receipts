@@ -297,23 +297,19 @@ DO $$ DECLARE r RECORD; BEGIN
   END LOOP;
 END $$;
 
--- leagues: read only if member; create allowed; update only by admin
+-- leagues: SELECT for members only. All writes go through SECURITY DEFINER RPCs.
 CREATE POLICY "leagues_select" ON leagues FOR SELECT
   USING (is_league_member(id, auth.uid()));
-CREATE POLICY "leagues_insert" ON leagues FOR INSERT
-  WITH CHECK (auth.uid() IS NOT NULL);
-CREATE POLICY "leagues_update" ON leagues FOR UPDATE
-  USING (is_league_admin(id, auth.uid()));
+-- No INSERT/UPDATE/DELETE policies -- all writes via rpc_create_league,
+-- rpc_rename_league, rpc_regenerate_code.
 
--- league_members: members can read; insert via RPC; update own row or admin
+-- league_members: SELECT for members only. All writes go through SECURITY DEFINER RPCs.
+-- Coins, is_admin and all stats can never be touched directly by a client.
 CREATE POLICY "league_members_select" ON league_members FOR SELECT
   USING (is_league_member(league_id, auth.uid()));
-CREATE POLICY "league_members_insert" ON league_members FOR INSERT
-  WITH CHECK (auth.uid() IS NOT NULL);
-CREATE POLICY "league_members_update" ON league_members FOR UPDATE
-  USING (user_id = auth.uid() OR is_league_admin(league_id, auth.uid()));
-CREATE POLICY "league_members_delete" ON league_members FOR DELETE
-  USING (user_id = auth.uid() OR is_league_admin(league_id, auth.uid()));
+-- No INSERT/UPDATE/DELETE policies -- all writes via rpc_join_league,
+-- rpc_leave_league, rpc_remove_member, rpc_update_profile, rpc_weekly_checkin,
+-- rpc_claim_bankruptcy_relief, and all match/puzzle/stock/event RPCs.
 
 -- league_games
 CREATE POLICY "league_games_select" ON league_games FOR SELECT
@@ -438,6 +434,154 @@ BEGIN
   INSERT INTO league_games (league_id, game_id)
   VALUES (p_league_id, p_game_id)
   ON CONFLICT DO NOTHING;
+END;
+$$;
+
+-- ============================================================
+-- RPC: rpc_rename_league
+-- Admin-only: update the league name.
+-- ============================================================
+CREATE OR REPLACE FUNCTION rpc_rename_league(
+  p_league_id UUID,
+  p_name      TEXT
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  IF NOT is_league_admin(p_league_id, auth.uid()) THEN
+    RAISE EXCEPTION 'not_admin';
+  END IF;
+  IF trim(p_name) = '' THEN
+    RAISE EXCEPTION 'name_empty';
+  END IF;
+  UPDATE leagues SET name = trim(p_name), updated_at = now()
+  WHERE id = p_league_id;
+END;
+$$;
+
+-- ============================================================
+-- RPC: rpc_regenerate_code
+-- Admin-only: replace the join code with a new unique one.
+-- The old code stops working immediately.
+-- ============================================================
+CREATE OR REPLACE FUNCTION rpc_regenerate_code(
+  p_league_id UUID
+) RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_code CHAR(6);
+BEGIN
+  IF NOT is_league_admin(p_league_id, auth.uid()) THEN
+    RAISE EXCEPTION 'not_admin';
+  END IF;
+  LOOP
+    v_code := generate_join_code();
+    EXIT WHEN NOT EXISTS (SELECT 1 FROM leagues WHERE join_code = v_code);
+  END LOOP;
+  UPDATE leagues SET join_code = v_code, updated_at = now()
+  WHERE id = p_league_id;
+  RETURN v_code;
+END;
+$$;
+
+-- ============================================================
+-- RPC: rpc_set_fifa_version
+-- Admin-only: set the current FIFA/EA FC version label.
+-- ============================================================
+CREATE OR REPLACE FUNCTION rpc_set_fifa_version(
+  p_league_id UUID,
+  p_version   TEXT
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  IF NOT is_league_admin(p_league_id, auth.uid()) THEN
+    RAISE EXCEPTION 'not_admin';
+  END IF;
+  UPDATE leagues SET fifa_version = nullif(trim(p_version), ''), updated_at = now()
+  WHERE id = p_league_id;
+END;
+$$;
+
+-- ============================================================
+-- RPC: rpc_leave_league
+-- Member removes themselves. If they are the last member the
+-- league is deleted (ON DELETE CASCADE cleans up everything).
+-- Admin cannot leave while other members remain -- they must
+-- first transfer admin to someone else.
+-- ============================================================
+CREATE OR REPLACE FUNCTION rpc_leave_league(
+  p_league_id UUID
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_member_count INT;
+BEGIN
+  IF NOT is_league_member(p_league_id, auth.uid()) THEN
+    RAISE EXCEPTION 'not_member';
+  END IF;
+
+  SELECT COUNT(*) INTO v_member_count
+  FROM league_members WHERE league_id = p_league_id;
+
+  -- Admin cannot leave while other members remain
+  IF is_league_admin(p_league_id, auth.uid()) AND v_member_count > 1 THEN
+    RAISE EXCEPTION 'admin_must_transfer_first';
+  END IF;
+
+  DELETE FROM league_members
+  WHERE league_id = p_league_id AND user_id = auth.uid();
+
+  -- If last member just left, remove the league
+  IF v_member_count = 1 THEN
+    DELETE FROM leagues WHERE id = p_league_id;
+  END IF;
+END;
+$$;
+
+-- ============================================================
+-- RPC: rpc_remove_member
+-- Admin-only: remove another member from the league.
+-- Cannot remove another admin.
+-- ============================================================
+CREATE OR REPLACE FUNCTION rpc_remove_member(
+  p_league_id UUID,
+  p_user_id   UUID
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  IF NOT is_league_admin(p_league_id, auth.uid()) THEN
+    RAISE EXCEPTION 'not_admin';
+  END IF;
+  IF p_user_id = auth.uid() THEN
+    RAISE EXCEPTION 'use_leave_league_to_remove_yourself';
+  END IF;
+  -- Cannot remove another admin
+  IF is_league_admin(p_league_id, p_user_id) THEN
+    RAISE EXCEPTION 'cannot_remove_admin';
+  END IF;
+  DELETE FROM league_members
+  WHERE league_id = p_league_id AND user_id = p_user_id;
+END;
+$$;
+
+-- ============================================================
+-- RPC: rpc_update_profile
+-- Member updates their own display_name and/or avatar fields.
+-- Only affects the caller's row; cannot touch coins or is_admin.
+-- ============================================================
+CREATE OR REPLACE FUNCTION rpc_update_profile(
+  p_league_id    UUID,
+  p_display_name TEXT        DEFAULT NULL,
+  p_avatar_color TEXT        DEFAULT NULL,
+  p_avatar_url   TEXT        DEFAULT NULL
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  IF NOT is_league_member(p_league_id, auth.uid()) THEN
+    RAISE EXCEPTION 'not_member';
+  END IF;
+  UPDATE league_members
+  SET
+    display_name = COALESCE(p_display_name, display_name),
+    avatar_color = COALESCE(p_avatar_color, avatar_color),
+    avatar_url   = CASE
+                     WHEN p_avatar_url IS NOT NULL THEN nullif(p_avatar_url, '')
+                     ELSE avatar_url
+                   END
+  WHERE league_id = p_league_id AND user_id = auth.uid();
 END;
 $$;
 

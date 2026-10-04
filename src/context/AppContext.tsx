@@ -82,6 +82,13 @@ export interface Actions {
   voteEvent: (eventId: string, vote: 'for' | 'against') => Promise<void>;
   weeklyCheckin: (leagueId: string) => Promise<boolean>;
   claimBankruptcyRelief: (leagueId: string) => Promise<void>;
+  // League / member management (all go through RPCs in live mode)
+  renameLeague: (leagueId: string, name: string) => Promise<void>;
+  regenerateCode: (leagueId: string) => Promise<string>;
+  setFifaVersion: (leagueId: string, version: string) => Promise<void>;
+  leaveLeague: (leagueId: string) => Promise<void>;
+  removeMember: (leagueId: string, memberId: string) => Promise<void>;
+  updateProfile: (leagueId: string, fields: { displayName?: string; avatarColor?: string; avatarUrl?: string }) => Promise<void>;
 }
 
 // Startup status used by App.tsx to decide which screen to render.
@@ -625,6 +632,110 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       } else {
         const { rpcClaimBankruptcyRelief } = await getSupabase();
         await rpcClaimBankruptcyRelief(leagueId);
+      }
+    },
+
+    renameLeague: async (leagueId, name) => {
+      if (IS_DEMO) {
+        demoStore.renameLeague(leagueId, name);
+      } else {
+        const { rpcRenameLeague } = await getSupabase();
+        await rpcRenameLeague(leagueId, name);
+        setState((s) => ({
+          ...s,
+          leagues: s.leagues.map((l) => l.id !== leagueId ? l : { ...l, name }),
+        }));
+      }
+    },
+
+    regenerateCode: async (leagueId) => {
+      if (IS_DEMO) {
+        return demoStore.regenerateCode(leagueId);
+      } else {
+        const { rpcRegenerateCode } = await getSupabase();
+        const newCode = await rpcRegenerateCode(leagueId);
+        setState((s) => ({
+          ...s,
+          leagues: s.leagues.map((l) => l.id !== leagueId ? l : { ...l, join_code: newCode }),
+        }));
+        return newCode;
+      }
+    },
+
+    setFifaVersion: async (leagueId, version) => {
+      if (IS_DEMO) {
+        demoStore.setFifaVersion(leagueId, version);
+      } else {
+        const { rpcSetFifaVersion } = await getSupabase();
+        await rpcSetFifaVersion(leagueId, version);
+        setState((s) => ({
+          ...s,
+          leagues: s.leagues.map((l) => l.id !== leagueId ? l : { ...l, fifa_version: version }),
+        }));
+      }
+    },
+
+    leaveLeague: async (leagueId) => {
+      const userId = IS_DEMO ? demoStore.getCurrentUserId() : '';
+      if (IS_DEMO) {
+        demoStore.leaveLeague(leagueId, userId);
+      } else {
+        const { rpcLeaveLeague } = await getSupabase();
+        await rpcLeaveLeague(leagueId);
+        setState((s) => {
+          const leagues = s.leagues
+            .map((l) => l.id !== leagueId ? l : { ...l, members: l.members.filter((m) => m.id !== s.currentUserId) })
+            .filter((l) => l.members.length > 0);
+          const currentLeagueId = leagues.find((l) => l.id === s.currentLeagueId)
+            ? s.currentLeagueId
+            : (leagues[0]?.id ?? '');
+          return { ...s, leagues, currentLeagueId };
+        });
+      }
+    },
+
+    removeMember: async (leagueId, memberId) => {
+      if (IS_DEMO) {
+        demoStore.removeMember(leagueId, memberId);
+      } else {
+        const { rpcRemoveMember } = await getSupabase();
+        await rpcRemoveMember(leagueId, memberId);
+        setState((s) => ({
+          ...s,
+          leagues: s.leagues.map((l) =>
+            l.id !== leagueId ? l : { ...l, members: l.members.filter((m) => m.id !== memberId) }
+          ),
+        }));
+      }
+    },
+
+    updateProfile: async (leagueId, fields) => {
+      const userId = IS_DEMO ? demoStore.getCurrentUserId() : '';
+      if (IS_DEMO) {
+        demoStore.updateProfile(leagueId, userId, {
+          display_name: fields.displayName,
+          avatar_color: fields.avatarColor,
+          avatar_url:   fields.avatarUrl,
+        });
+      } else {
+        const { rpcUpdateProfile } = await getSupabase();
+        await rpcUpdateProfile(leagueId, fields);
+        setState((s) => ({
+          ...s,
+          leagues: s.leagues.map((l) =>
+            l.id !== leagueId ? l : {
+              ...l,
+              members: l.members.map((m) =>
+                m.id !== s.currentUserId ? m : {
+                  ...m,
+                  display_name: fields.displayName ?? m.display_name,
+                  avatar_color: fields.avatarColor ?? m.avatar_color,
+                  avatar_url:   fields.avatarUrl   ?? m.avatar_url,
+                }
+              ),
+            }
+          ),
+        }));
       }
     },
   };

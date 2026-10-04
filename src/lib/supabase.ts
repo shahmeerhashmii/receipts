@@ -28,7 +28,56 @@ export function onAuthStateChange(cb: (userId: string | null) => void) {
   });
 }
 
-// ---- League RPCs --------------------------------------------------------
+// ---- League admin RPCs --------------------------------------------------
+
+export async function rpcRenameLeague(leagueId: string, name: string): Promise<void> {
+  const { error } = await supabase.rpc('rpc_rename_league', {
+    p_league_id: leagueId, p_name: name,
+  });
+  if (error) throw error;
+}
+
+export async function rpcRegenerateCode(leagueId: string): Promise<string> {
+  const { data, error } = await supabase.rpc('rpc_regenerate_code', {
+    p_league_id: leagueId,
+  });
+  if (error) throw error;
+  return data as string;
+}
+
+export async function rpcSetFifaVersion(leagueId: string, version: string): Promise<void> {
+  const { error } = await supabase.rpc('rpc_set_fifa_version', {
+    p_league_id: leagueId, p_version: version,
+  });
+  if (error) throw error;
+}
+
+export async function rpcLeaveLeague(leagueId: string): Promise<void> {
+  const { error } = await supabase.rpc('rpc_leave_league', { p_league_id: leagueId });
+  if (error) throw error;
+}
+
+export async function rpcRemoveMember(leagueId: string, userId: string): Promise<void> {
+  const { error } = await supabase.rpc('rpc_remove_member', {
+    p_league_id: leagueId, p_user_id: userId,
+  });
+  if (error) throw error;
+}
+
+export async function rpcUpdateProfile(
+  leagueId: string,
+  fields: { displayName?: string; avatarColor?: string; avatarUrl?: string },
+): Promise<void> {
+  const { error } = await supabase.rpc('rpc_update_profile', {
+    p_league_id:    leagueId,
+    p_display_name: fields.displayName ?? null,
+    p_avatar_color: fields.avatarColor ?? null,
+    p_avatar_url:   fields.avatarUrl   ?? null,
+  });
+  if (error) throw error;
+}
+
+// ---- League create/join RPCs --------------------------------------------
 
 export async function rpcCreateLeague(
   name: string,

@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Avatar } from '../components/Avatar';
-import { demoStore } from '../demo/store';
-import { generateJoinCode } from '../rules/joinCode';
 
 export function LeagueSettingsScreen({ onClose }: { onClose: () => void }) {
-  const { currentLeague, state } = useApp();
+  const { currentLeague, state, actions, switchLeague } = useApp();
   const [copied, setCopied] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState('');
+  const [fifaInput, setFifaInput] = useState('');
+  const [fifaEditing, setFifaEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   if (!currentLeague) return null;
 
@@ -26,14 +29,57 @@ export function LeagueSettingsScreen({ onClose }: { onClose: () => void }) {
     navigator.clipboard.writeText(joinUrl);
   }
 
-  function regenerateCode() {
-    const newCode = generateJoinCode();
-    demoStore.setState((s) => ({
-      ...s,
-      leagues: s.leagues.map((l) =>
-        l.id === currentLeague!.id ? { ...l, join_code: newCode } : l
-      ),
-    }));
+  async function regenerateCode() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await actions.regenerateCode(currentLeague!.id);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveName() {
+    if (!nameInput.trim() || busy) return;
+    setBusy(true);
+    try {
+      await actions.renameLeague(currentLeague!.id, nameInput.trim());
+      setEditingName(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveFifaVersion() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await actions.setFifaVersion(currentLeague!.id, fifaInput);
+      setFifaEditing(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeMember(memberId: string) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await actions.removeMember(currentLeague!.id, memberId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function leaveLeague() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await actions.leaveLeague(currentLeague!.id);
+      onClose();
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -45,7 +91,33 @@ export function LeagueSettingsScreen({ onClose }: { onClose: () => void }) {
         >
           &larr;
         </button>
-        <h2 style={{ fontSize: 18, fontWeight: 700 }}>{currentLeague.name}</h2>
+        {editingName ? (
+          <div style={{ display: 'flex', gap: 8, flex: 1 }}>
+            <input
+              className="input"
+              style={{ flex: 1, height: 36 }}
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setEditingName(false); }}
+              autoFocus
+            />
+            <button className="btn btn-primary" style={{ height: 36, minHeight: 36, padding: '0 12px', fontSize: 13 }} onClick={saveName} disabled={busy}>
+              Save
+            </button>
+            <button className="btn btn-ghost" style={{ height: 36, minHeight: 36, padding: '0 10px', fontSize: 13 }} onClick={() => setEditingName(false)}>
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <h2
+            style={{ fontSize: 18, fontWeight: 700, cursor: isAdmin ? 'pointer' : 'default' }}
+            onClick={() => { if (isAdmin) { setNameInput(currentLeague.name); setEditingName(true); } }}
+            title={isAdmin ? 'Tap to rename' : undefined}
+          >
+            {currentLeague.name}
+            {isAdmin && <span style={{ color: 'var(--muted)', fontSize: 13, fontWeight: 400, marginLeft: 6 }}>edit</span>}
+          </h2>
+        )}
       </div>
 
       {/* Join code */}
@@ -67,8 +139,9 @@ export function LeagueSettingsScreen({ onClose }: { onClose: () => void }) {
             className="btn btn-ghost"
             style={{ width: '100%', marginTop: 8, height: 36, minHeight: 36, fontSize: 12 }}
             onClick={regenerateCode}
+            disabled={busy}
           >
-            Regenerate code
+            {busy ? 'Regenerating...' : 'Regenerate code'}
           </button>
         )}
       </div>
@@ -78,20 +151,32 @@ export function LeagueSettingsScreen({ onClose }: { onClose: () => void }) {
         <>
           <div className="section-title">Current FIFA version</div>
           <div className="card" style={{ marginBottom: 16 }}>
-            <input
-              type="text"
-              className="input"
-              placeholder="e.g. FC 27"
-              defaultValue={currentLeague.fifa_version || ''}
-              onBlur={(e) => {
-                demoStore.setState((s) => ({
-                  ...s,
-                  leagues: s.leagues.map((l) =>
-                    l.id === currentLeague.id ? { ...l, fifa_version: e.target.value } : l
-                  ),
-                }));
-              }}
-            />
+            {fifaEditing ? (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  className="input"
+                  placeholder="e.g. FC 27"
+                  value={fifaInput}
+                  onChange={(e) => setFifaInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveFifaVersion(); if (e.key === 'Escape') setFifaEditing(false); }}
+                  style={{ flex: 1 }}
+                  autoFocus
+                />
+                <button className="btn btn-primary" style={{ height: 40, minHeight: 40, padding: '0 12px', fontSize: 13 }} onClick={saveFifaVersion} disabled={busy}>
+                  Save
+                </button>
+              </div>
+            ) : (
+              <div
+                style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                onClick={() => { setFifaInput(currentLeague.fifa_version || ''); setFifaEditing(true); }}
+              >
+                <span style={{ color: currentLeague.fifa_version ? 'var(--text)' : 'var(--muted)', fontSize: 15 }}>
+                  {currentLeague.fifa_version || 'Not set'}
+                </span>
+                <span style={{ color: 'var(--muted)', fontSize: 13 }}>edit</span>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -108,20 +193,12 @@ export function LeagueSettingsScreen({ onClose }: { onClose: () => void }) {
                 {m.is_admin ? 'Admin' : 'Member'}
               </div>
             </div>
-            {isAdmin && m.id !== userId && (
+            {isAdmin && m.id !== userId && !m.is_admin && (
               <button
                 className="btn btn-ghost"
                 style={{ height: 32, minHeight: 32, padding: '0 10px', fontSize: 12 }}
-                onClick={() => {
-                  demoStore.setState((s) => ({
-                    ...s,
-                    leagues: s.leagues.map((l) =>
-                      l.id === currentLeague.id
-                        ? { ...l, members: l.members.filter((mem) => mem.id !== m.id) }
-                        : l
-                    ),
-                  }));
-                }}
+                onClick={() => removeMember(m.id)}
+                disabled={busy}
               >
                 Remove
               </button>
@@ -143,28 +220,24 @@ export function LeagueSettingsScreen({ onClose }: { onClose: () => void }) {
       ) : (
         <div>
           <div style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 12, textAlign: 'center' }}>
-            Are you sure you want to leave?
+            {isAdmin && currentLeague.members.length > 1
+              ? 'You are the admin. Transfer admin to another member before leaving.'
+              : 'Are you sure you want to leave?'}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setConfirmLeave(false)}>Cancel</button>
-            <button
-              className="btn btn-danger"
-              style={{ flex: 1 }}
-              onClick={() => {
-                demoStore.setState((s) => ({
-                  ...s,
-                  leagues: s.leagues.map((l) =>
-                    l.id === currentLeague.id
-                      ? { ...l, members: l.members.filter((m) => m.id !== userId) }
-                      : l
-                  ),
-                  currentLeagueId: s.leagues.find((l) => l.id !== currentLeague.id)?.id || s.currentLeagueId,
-                }));
-                onClose();
-              }}
-            >
-              Leave
+            <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setConfirmLeave(false)}>
+              Cancel
             </button>
+            {!(isAdmin && currentLeague.members.length > 1) && (
+              <button
+                className="btn btn-danger"
+                style={{ flex: 1 }}
+                onClick={leaveLeague}
+                disabled={busy}
+              >
+                {busy ? 'Leaving...' : 'Leave'}
+              </button>
+            )}
           </div>
         </div>
       )}
