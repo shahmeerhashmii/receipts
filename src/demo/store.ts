@@ -11,7 +11,10 @@ import {
 } from '../rules';
 import type { ActiveEffect } from '../rules/events';
 
-const STORAGE_KEY = 'receipts_demo_v1';
+// Namespaced key - clearly separate from any future live-mode keys.
+// Old key kept for one-time migration so existing demo sessions survive an upgrade.
+const STORAGE_KEY = 'receipts:demo:v1';
+const LEGACY_STORAGE_KEY = 'receipts_demo_v1';
 
 export interface DemoState {
   initialized: boolean;
@@ -174,6 +177,12 @@ export interface MemberStats {
 
 function loadState(): DemoState | null {
   try {
+    // Migrate from the old key once, then remove it.
+    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (legacy) {
+      localStorage.setItem(STORAGE_KEY, legacy);
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+    }
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     return JSON.parse(raw);
@@ -777,6 +786,7 @@ export const demoStore = {
 
   reset: () => {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
     _state = null;
     getState(); // reinitialize
   },

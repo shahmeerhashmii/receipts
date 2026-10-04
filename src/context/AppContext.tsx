@@ -3,11 +3,53 @@ import { demoStore, type DemoState, type League, type LeagueMember, type MemberS
 
 const IS_DEMO = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+// ---------------------------------------------------------------------------
+// Storage isolation
+// Remove all demo-mode localStorage entries when running in live mode so
+// stale demo data never leaks into a real session. This runs synchronously
+// at module evaluation time - before any component mounts.
+// ---------------------------------------------------------------------------
+const DEMO_KEY_PREFIXES = ['receipts:demo:', 'receipts_demo_'];
+
+export function clearDemoStorage() {
+  const toRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && DEMO_KEY_PREFIXES.some((p) => key.startsWith(p))) {
+      toRemove.push(key);
+    }
+  }
+  toRemove.forEach((k) => localStorage.removeItem(k));
+}
+
+if (!IS_DEMO) {
+  clearDemoStorage();
+}
+
+// ---------------------------------------------------------------------------
 // Lazily import Supabase so it is never bundled in demo builds that tree-shake it
 // (in practice Vite will include it, but it is never called when IS_DEMO is true)
+// ---------------------------------------------------------------------------
 async function getSupabase() {
   return import('../lib/supabase');
 }
+
+// Empty state used as the initial value in live mode - no demo data is ever read.
+const EMPTY_STATE: DemoState = {
+  initialized: false,
+  leagues: [],
+  matches: [],
+  puzzleSubmissions: [],
+  holdings: [],
+  stockPriceHistory: [],
+  events: [],
+  scheduledMatches: [],
+  picks: [],
+  feedItems: [],
+  badges: [],
+  currentUserId: '',
+  currentLeagueId: '',
+};
 
 export interface Actions {
   logMatch: (params: {
@@ -61,10 +103,14 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<DemoState>(() => demoStore.getState());
+  // In live mode, start from a blank slate - never read demo localStorage data.
+  const [state, setState] = useState<DemoState>(() => IS_DEMO ? demoStore.getState() : EMPTY_STATE);
   const [viewingMemberId, setViewingMemberId] = useState<string | null>(null);
 
-  const refresh = useCallback(() => setState({ ...demoStore.getState() }), []);
+  const refresh = useCallback(() => {
+    if (IS_DEMO) setState({ ...demoStore.getState() });
+    // In live mode, refresh is a no-op here; Supabase Realtime handles updates.
+  }, []);
   const viewProfile = useCallback((memberId: string) => setViewingMemberId(memberId), []);
   const clearProfile = useCallback(() => setViewingMemberId(null), []);
 
@@ -114,10 +160,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const currentLeague = state.leagues.find((l) => l.id === state.currentLeagueId) || null;
   const currentMember = currentLeague?.members.find((m) => m.id === state.currentUserId) || null;
-  const memberStats = currentLeague ? demoStore.computeMemberStats(currentLeague.id) : [];
+  const memberStats = (IS_DEMO && currentLeague) ? demoStore.computeMemberStats(currentLeague.id) : [];
 
   const switchLeague = useCallback((id: string) => {
-    demoStore.switchLeague(id);
+    if (IS_DEMO) demoStore.switchLeague(id);
     setViewingMemberId(null);
   }, []);
 
