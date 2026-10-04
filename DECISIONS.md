@@ -56,3 +56,17 @@ Decisions made during build where requirements were ambiguous.
 ## No em dashes
 
 All copy uses regular hyphens (-) or "and." No em dashes anywhere in the codebase.
+
+## Production / Supabase layer (Session 2)
+
+**Decision:** Reactions (`addReaction`) write directly from the client via RLS INSERT/DELETE on the `reactions` table. No RPC wrapper.
+**Reason:** Reactions carry no coin or rating side effects. The spec says clients never write balances directly; reaction counts have no economic impact. Direct writes with RLS (member must belong to the league) are simpler, faster, and match common Supabase patterns.
+
+**Decision:** Admin-only settings mutations (regenerate join code, set FIFA version, remove member, leave league) in `LeagueSettingsScreen` still use `demoStore.setState` directly in demo mode and have no production RPC yet.
+**Reason:** None of these change ratings, coins, prices, picks, bounties, badges or event results. The schema has the relevant tables and RLS. RPCs (`rpc_rename_league`, `rpc_remove_member`, `rpc_leave_league`) can be added in a follow-up once Supabase is live without changing any rule logic.
+
+**Decision:** The "change pick" flow in `MatchesScreen` uses a direct `demoStore.setState` to refund coins and remove the old pick before opening the pick form again. In production, `rpc_make_pick` handles this atomically (delete old pick + refund + insert new pick) server-side.
+**Reason:** The demo must mirror the production behavior, but the production atomic path is a single `rpc_make_pick` call that already handles both cases. Duplicating the refund logic in an `actions.changePick` wrapper would be redundant.
+
+**Decision:** `OnboardingScreen` uses `demoStore.createLeague` and `demoStore.joinLeagueByCode` directly (no `actions` wrapper).
+**Reason:** Onboarding is the one place where a Supabase session does not yet exist. In production these calls would go to `rpc_create_league` / `rpc_join_league` but that requires integrating Supabase anonymous auth and session management, which is a separate concern from the action-dispatch refactor.

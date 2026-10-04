@@ -2,8 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Avatar } from '../components/Avatar';
 import { BottomSheet } from '../components/BottomSheet';
-import { demoStore } from '../demo/store';
-import { eventPasses, votesNeededToPass } from '../rules/events';
+import { votesNeededToPass } from '../rules/events';
 import { format, formatDistanceToNow } from 'date-fns';
 
 const EVENT_LABELS = {
@@ -14,7 +13,7 @@ const EVENT_LABELS = {
 };
 
 export function EventsScreen() {
-  const { currentLeague, state } = useApp();
+  const { currentLeague, state, actions } = useApp();
   const [proposeOpen, setProposeOpen] = useState(false);
   const [form, setForm] = useState({
     subject_id: '',
@@ -35,10 +34,9 @@ export function EventsScreen() {
 
   function handlePropose() {
     if (!form.subject_id || !form.description) return;
-    demoStore.proposeEvent({
-      league_id: currentLeague!.id,
-      proposer_id: userId,
-      subject_id: form.subject_id,
+    actions.proposeEvent({
+      leagueId: currentLeague!.id,
+      subjectId: form.subject_id,
       description: form.description,
       size: form.size,
     });
@@ -108,14 +106,14 @@ export function EventsScreen() {
                 <button
                   className="btn btn-primary"
                   style={{ flex: 1, height: 36, minHeight: 36, fontSize: 13 }}
-                  onClick={() => demoStore.voteEvent(event.id, userId, 'for', currentLeague!.members.length)}
+                  onClick={() => actions.voteEvent(event.id, 'for')}
                 >
                   👍 Yes
                 </button>
                 <button
                   className="btn btn-ghost"
                   style={{ flex: 1, height: 36, minHeight: 36, fontSize: 13 }}
-                  onClick={() => demoStore.voteEvent(event.id, userId, 'against', currentLeague!.members.length)}
+                  onClick={() => actions.voteEvent(event.id, 'against')}
                 >
                   👎 No
                 </button>

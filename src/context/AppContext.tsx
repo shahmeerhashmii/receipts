@@ -3,6 +3,45 @@ import { demoStore, type DemoState, type League, type LeagueMember, type MemberS
 
 const IS_DEMO = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+// Lazily import Supabase so it is never bundled in demo builds that tree-shake it
+// (in practice Vite will include it, but it is never called when IS_DEMO is true)
+async function getSupabase() {
+  return import('../lib/supabase');
+}
+
+export interface Actions {
+  logMatch: (params: {
+    leagueId: string; gameId: string; opponentId: string;
+    result: 'win' | 'loss' | 'draw';
+    scoreA?: number; scoreB?: number; starsA?: number; starsB?: number;
+  }) => Promise<void>;
+  confirmMatch: (matchId: string) => Promise<void>;
+  disputeMatch: (matchId: string) => Promise<void>;
+  voidMatch: (matchId: string) => Promise<void>;
+  submitPuzzle: (params: {
+    leagueId: string; gameId: string; puzzleNumber: number;
+    puzzleDate: string; score: number; hardMode?: boolean;
+    emojiGrid?: string; rawText?: string;
+  }) => Promise<void>;
+  buyStock: (leagueId: string, subjectId: string, shares: number) => Promise<void>;
+  sellStock: (leagueId: string, subjectId: string, shares: number) => Promise<void>;
+  scheduleMatch: (params: {
+    leagueId: string; gameId: string; playerAId: string;
+    playerBId: string; scheduledAt: string;
+  }) => Promise<void>;
+  makePick: (params: {
+    scheduledMatchId: string; pickedPlayerId: string;
+    stake: number; multiplier: number;
+  }) => Promise<void>;
+  proposeEvent: (params: {
+    leagueId: string; subjectId: string;
+    description: string; size: 'big_w' | 'small_w' | 'small_l' | 'big_l';
+  }) => Promise<void>;
+  voteEvent: (eventId: string, vote: 'for' | 'against') => Promise<void>;
+  weeklyCheckin: (leagueId: string) => Promise<boolean>;
+  claimBankruptcyRelief: (leagueId: string) => Promise<void>;
+}
+
 interface AppContextType {
   isDemo: boolean;
   isLive: boolean;
@@ -12,6 +51,7 @@ interface AppContextType {
   memberStats: MemberStats[];
   refresh: () => void;
   switchLeague: (id: string) => void;
+  actions: Actions;
   // Navigation helpers
   viewProfile: (memberId: string) => void;
   clearProfile: () => void;
@@ -21,7 +61,6 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  // Store a copy of the demo state so React sees reference changes and re-renders consumers
   const [state, setState] = useState<DemoState>(() => demoStore.getState());
   const [viewingMemberId, setViewingMemberId] = useState<string | null>(null);
 
@@ -31,7 +70,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (IS_DEMO) {
-      // Whenever the store mutates, snapshot it into React state
       const unsub = demoStore.subscribe(() => {
         setState({ ...demoStore.getState() });
       });
@@ -49,7 +87,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const friends = league.members.filter((m) => m.id !== s.currentUserId);
       if (friends.length === 0) return;
       const friend = friends[Math.floor(Math.random() * friends.length)];
-
       const opponent = friends.find((f) => f.id !== friend.id);
       if (!opponent) return;
 
@@ -81,12 +118,201 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const switchLeague = useCallback((id: string) => {
     demoStore.switchLeague(id);
-    setViewingMemberId(null); // clear any open profile on league switch
+    setViewingMemberId(null);
   }, []);
+
+  // Unified actions: demo mode uses demoStore; production calls Supabase RPCs
+  const actions: Actions = {
+    logMatch: async (params) => {
+      if (IS_DEMO) {
+        demoStore.logMatch({
+          league_id: params.leagueId,
+          game_id: params.gameId,
+          player_a_id: demoStore.getCurrentUserId(),
+          player_b_id: params.opponentId,
+          result: params.result,
+          score_a: params.scoreA,
+          score_b: params.scoreB,
+          stars_a: params.starsA,
+          stars_b: params.starsB,
+          status: 'pending',
+          logged_by: demoStore.getCurrentUserId(),
+        });
+      } else {
+        const { rpcLogMatch } = await getSupabase();
+        await rpcLogMatch(params);
+      }
+    },
+
+    confirmMatch: async (matchId) => {
+      if (IS_DEMO) {
+        demoStore.confirmMatch(matchId);
+      } else {
+        const { rpcConfirmMatch } = await getSupabase();
+        await rpcConfirmMatch(matchId);
+      }
+    },
+
+    disputeMatch: async (matchId) => {
+      if (IS_DEMO) {
+        demoStore.disputeMatch(matchId);
+      } else {
+        const { rpcDisputeMatch } = await getSupabase();
+        await rpcDisputeMatch(matchId);
+      }
+    },
+
+    voidMatch: async (matchId) => {
+      if (IS_DEMO) {
+        demoStore.voidMatch(matchId);
+      } else {
+        const { rpcVoidMatch } = await getSupabase();
+        await rpcVoidMatch(matchId);
+      }
+    },
+
+    submitPuzzle: async (params) => {
+      if (IS_DEMO) {
+        const today = new Date().toISOString().split('T')[0];
+        demoStore.submitPuzzle({
+          league_id: params.leagueId,
+          member_id: demoStore.getCurrentUserId(),
+          game_id: params.gameId,
+          puzzle_number: params.puzzleNumber,
+          puzzle_date: params.puzzleDate || today,
+          score: params.score,
+          hard_mode: params.hardMode,
+          emoji_grid: params.emojiGrid,
+          raw_text: params.rawText || '',
+        });
+      } else {
+        const { rpcSubmitPuzzle } = await getSupabase();
+        await rpcSubmitPuzzle(params);
+      }
+    },
+
+    buyStock: async (leagueId, subjectId, shares) => {
+      if (IS_DEMO) {
+        const s = demoStore.getState();
+        const league = s.leagues.find((l) => l.id === leagueId);
+        const stats = demoStore.computeMemberStats(leagueId).find((st) => st.memberId === subjectId);
+        const price = stats?.stockPrice || 40;
+        demoStore.buyStock(leagueId, s.currentUserId, subjectId, shares, price);
+      } else {
+        const { rpcBuyStock } = await getSupabase();
+        await rpcBuyStock(leagueId, subjectId, shares);
+      }
+    },
+
+    sellStock: async (leagueId, subjectId, shares) => {
+      if (IS_DEMO) {
+        const s = demoStore.getState();
+        const stats = demoStore.computeMemberStats(leagueId).find((st) => st.memberId === subjectId);
+        const price = stats?.stockPrice || 40;
+        demoStore.sellStock(leagueId, s.currentUserId, subjectId, shares, price);
+      } else {
+        const { rpcSellStock } = await getSupabase();
+        await rpcSellStock(leagueId, subjectId, shares);
+      }
+    },
+
+    scheduleMatch: async (params) => {
+      if (IS_DEMO) {
+        demoStore.scheduledMatch({
+          league_id: params.leagueId,
+          game_id: params.gameId,
+          player_a_id: params.playerAId,
+          player_b_id: params.playerBId,
+          scheduled_at: params.scheduledAt,
+        });
+      } else {
+        const { rpcScheduleMatch } = await getSupabase();
+        await rpcScheduleMatch(params);
+      }
+    },
+
+    makePick: async (params) => {
+      if (IS_DEMO) {
+        demoStore.makePick({
+          league_id: demoStore.getCurrentLeagueId(),
+          scheduled_match_id: params.scheduledMatchId,
+          picker_id: demoStore.getCurrentUserId(),
+          picked_player_id: params.pickedPlayerId,
+          stake: params.stake,
+          multiplier: params.multiplier,
+        });
+      } else {
+        const { rpcMakePick } = await getSupabase();
+        await rpcMakePick(params);
+      }
+    },
+
+    proposeEvent: async (params) => {
+      if (IS_DEMO) {
+        demoStore.proposeEvent({
+          league_id: params.leagueId,
+          proposer_id: demoStore.getCurrentUserId(),
+          subject_id: params.subjectId,
+          description: params.description,
+          size: params.size,
+        });
+      } else {
+        const { rpcProposeEvent } = await getSupabase();
+        await rpcProposeEvent(params);
+      }
+    },
+
+    voteEvent: async (eventId, vote) => {
+      if (IS_DEMO) {
+        const s = demoStore.getState();
+        const league = s.leagues.find((l) => l.id === s.currentLeagueId);
+        demoStore.voteEvent(eventId, s.currentUserId, vote, league?.members.length || 6);
+      } else {
+        const { rpcVoteEvent } = await getSupabase();
+        await rpcVoteEvent(eventId, vote);
+      }
+    },
+
+    weeklyCheckin: async (leagueId) => {
+      if (IS_DEMO) {
+        // Demo: always grant for simplicity
+        return false;
+      } else {
+        const { rpcWeeklyCheckin } = await getSupabase();
+        return rpcWeeklyCheckin(leagueId);
+      }
+    },
+
+    claimBankruptcyRelief: async (leagueId) => {
+      if (IS_DEMO) {
+        // Demo: direct coin grant
+        demoStore.setState((s) => ({
+          ...s,
+          leagues: s.leagues.map((l) => {
+            if (l.id !== leagueId) return l;
+            return {
+              ...l,
+              members: l.members.map((m) =>
+                m.id === s.currentUserId ? { ...m, coins: m.coins + 100 } : m
+              ),
+            };
+          }),
+        }));
+      } else {
+        const { rpcClaimBankruptcyRelief } = await getSupabase();
+        await rpcClaimBankruptcyRelief(leagueId);
+      }
+    },
+  };
 
   return (
     <AppContext.Provider
-      value={{ isDemo: IS_DEMO, isLive: !IS_DEMO, state, currentLeague, currentMember, memberStats, refresh, switchLeague, viewProfile, clearProfile, viewingMemberId }}
+      value={{
+        isDemo: IS_DEMO, isLive: !IS_DEMO,
+        state, currentLeague, currentMember, memberStats,
+        refresh, switchLeague, actions,
+        viewProfile, clearProfile, viewingMemberId,
+      }}
     >
       {children}
     </AppContext.Provider>

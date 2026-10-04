@@ -2,10 +2,8 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { BottomSheet } from '../components/BottomSheet';
 import { Avatar } from '../components/Avatar';
-import { demoStore } from '../demo/store';
 import { parsePuzzle, validatePuzzleDate } from '../rules/puzzles';
-import { fifaHandicap, marginMultiplier } from '../rules/elo';
-import { IconPlus, IconChevronRight } from '@tabler/icons-react';
+import { IconChevronRight } from '@tabler/icons-react';
 import type { Match } from '../demo/store';
 
 type LogStep = 'choose' | 'log_match' | 'paste_puzzle' | 'off_books';
@@ -22,7 +20,7 @@ interface MatchForm {
 }
 
 export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { currentLeague, state } = useApp();
+  const { currentLeague, state, actions } = useApp();
   const [step, setStep] = useState<LogStep>('choose');
   const [form, setForm] = useState<MatchForm>({
     game_id: 'fifa',
@@ -86,18 +84,15 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
     const starsA = form.hasFifaTeams && form.stars_a ? parseFloat(form.stars_a) : undefined;
     const starsB = form.hasFifaTeams && form.stars_b ? parseFloat(form.stars_b) : undefined;
 
-    demoStore.logMatch({
-      league_id: currentLeague!.id,
-      game_id: form.game_id,
-      player_a_id: userId,
-      player_b_id: form.opponent_id,
+    actions.logMatch({
+      leagueId: currentLeague!.id,
+      gameId: form.game_id,
+      opponentId: form.opponent_id,
       result: form.result as 'win' | 'loss' | 'draw',
-      score_a: scoreA,
-      score_b: scoreB,
-      stars_a: starsA,
-      stars_b: starsB,
-      status: 'pending',
-      logged_by: userId,
+      scoreA,
+      scoreB,
+      starsA,
+      starsB,
     });
 
     setSubmitted(true);
@@ -114,7 +109,6 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
       setPuzzleError(`Puzzle #${parsed.puzzleNumber} does not match today's date. Allowed within 1 day.`);
       return;
     }
-    // Check duplicate
     const already = state.puzzleSubmissions.find(
       (s) =>
         s.league_id === currentLeague!.id &&
@@ -126,16 +120,15 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
       setPuzzleError(`You already posted ${parsed.type} #${parsed.puzzleNumber} today.`);
       return;
     }
-    demoStore.submitPuzzle({
-      league_id: currentLeague!.id,
-      member_id: userId,
-      game_id: parsed.type,
-      puzzle_number: parsed.puzzleNumber,
-      puzzle_date: today,
+    actions.submitPuzzle({
+      leagueId: currentLeague!.id,
+      gameId: parsed.type,
+      puzzleNumber: parsed.puzzleNumber,
+      puzzleDate: today,
       score: parsed.score,
-      hard_mode: parsed.hardMode,
-      emoji_grid: parsed.emojiGrid,
-      raw_text: puzzleText,
+      hardMode: parsed.hardMode,
+      emojiGrid: parsed.emojiGrid,
+      rawText: puzzleText,
     });
     setSubmitted(true);
   }
@@ -173,7 +166,7 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
             className="btn btn-primary"
             style={{ marginBottom: 8 }}
             onClick={() => {
-              demoStore.confirmMatch(duplicateMatch.id);
+              actions.confirmMatch(duplicateMatch.id);
               setSubmitted(true);
             }}
           >

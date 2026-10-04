@@ -4,7 +4,7 @@ import { Avatar } from '../components/Avatar';
 import { ReactionBar } from '../components/ReactionBar';
 import { BottomSheet } from '../components/BottomSheet';
 import { demoStore } from '../demo/store';
-import { expectedScore, kFactor } from '../rules/elo';
+import { expectedScore } from '../rules/elo';
 import { pickMultiplier, maxStake, minStake, pickPayout } from '../rules/picks';
 import { format } from 'date-fns';
 
@@ -14,7 +14,7 @@ const GAME_LABELS: Record<string, string> = {
 };
 
 export function MatchesScreen() {
-  const { currentLeague, state, memberStats } = useApp();
+  const { currentLeague, state, memberStats, actions } = useApp();
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [pickOpen, setPickOpen] = useState(false);
   const [selectedScheduledId, setSelectedScheduledId] = useState<string | null>(null);
@@ -60,11 +60,9 @@ export function MatchesScreen() {
   function handleMakePick() {
     if (!selectedScheduled || !pickForm.pickedPlayerId) return;
     const mult = getPickMultiplier(selectedScheduled.id, pickForm.pickedPlayerId);
-    demoStore.makePick({
-      league_id: currentLeague!.id,
-      scheduled_match_id: selectedScheduled.id,
-      picker_id: userId,
-      picked_player_id: pickForm.pickedPlayerId,
+    actions.makePick({
+      scheduledMatchId: selectedScheduled.id,
+      pickedPlayerId: pickForm.pickedPlayerId,
       stake: pickForm.stake,
       multiplier: mult,
     });
@@ -74,12 +72,12 @@ export function MatchesScreen() {
 
   function handleScheduleMatch() {
     if (!schedForm.player_a || !schedForm.player_b || !schedForm.scheduled_at) return;
-    demoStore.scheduledMatch({
-      league_id: currentLeague!.id,
-      game_id: schedForm.game_id,
-      player_a_id: schedForm.player_a,
-      player_b_id: schedForm.player_b,
-      scheduled_at: new Date(schedForm.scheduled_at).toISOString(),
+    actions.scheduleMatch({
+      leagueId: currentLeague!.id,
+      gameId: schedForm.game_id,
+      playerAId: schedForm.player_a,
+      playerBId: schedForm.player_b,
+      scheduledAt: new Date(schedForm.scheduled_at).toISOString(),
     });
     setScheduleOpen(false);
     setSchedForm({ game_id: 'fifa', player_a: '', player_b: '', scheduled_at: '' });
@@ -143,7 +141,8 @@ export function MatchesScreen() {
                     className="btn btn-ghost"
                     style={{ width: '100%', height: 32, minHeight: 32, fontSize: 12 }}
                     onClick={() => {
-                      // Refund the stake and remove the pick, then reopen
+                      // Refund old pick then reopen (rpc_make_pick handles this server-side;
+                      // in demo mode replicate the same: remove old pick and refund coins)
                       demoStore.setState((s) => ({
                         ...s,
                         leagues: s.leagues.map((l) => {
@@ -214,7 +213,7 @@ export function MatchesScreen() {
                 <button
                   className="btn btn-primary"
                   style={{ marginLeft: 'auto', height: 28, minHeight: 28, padding: '0 10px', fontSize: 12 }}
-                  onClick={() => demoStore.confirmMatch(match.id)}
+                  onClick={() => actions.confirmMatch(match.id)}
                 >
                   Confirm
                 </button>
@@ -223,7 +222,7 @@ export function MatchesScreen() {
                 <button
                   className="btn btn-ghost"
                   style={{ height: 28, minHeight: 28, padding: '0 10px', fontSize: 12, marginLeft: 4 }}
-                  onClick={() => demoStore.disputeMatch(match.id)}
+                  onClick={() => actions.disputeMatch(match.id)}
                 >
                   Dispute
                 </button>

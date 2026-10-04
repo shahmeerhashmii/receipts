@@ -2,8 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Avatar } from '../components/Avatar';
 import { BottomSheet } from '../components/BottomSheet';
-import { demoStore } from '../demo/store';
-import { positionLimitAllowed, tradingLocked, sellProceeds, weeklyDividend } from '../rules/stocks';
+import { positionLimitAllowed, sellProceeds } from '../rules/stocks';
 import { IconTrendingUp, IconTrendingDown, IconCoins } from '@tabler/icons-react';
 
 function Sparkline({ data, color = '#2EE58A' }: { data: number[]; color?: string }) {
@@ -21,7 +20,7 @@ function Sparkline({ data, color = '#2EE58A' }: { data: number[]; color?: string
 }
 
 export function CrewfolioScreen() {
-  const { currentLeague, memberStats, state, viewProfile } = useApp();
+  const { currentLeague, memberStats, state, viewProfile, actions } = useApp();
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
   const [buyShares, setBuyShares] = useState(1);
   const [sellShares, setSellShares] = useState(1);
@@ -61,13 +60,13 @@ export function CrewfolioScreen() {
 
   function handleBuy() {
     if (!selectedMemberId || !canBuy()) return;
-    demoStore.buyStock(currentLeague!.id, userId, selectedMemberId, buyShares, selectedPrice);
+    actions.buyStock(currentLeague!.id, selectedMemberId, buyShares);
     setSelectedMemberId(null);
   }
 
   function handleSell() {
     if (!selectedMemberId || !canSell()) return;
-    demoStore.sellStock(currentLeague!.id, userId, selectedMemberId, sellShares, selectedPrice);
+    actions.sellStock(currentLeague!.id, selectedMemberId, sellShares);
     setSelectedMemberId(null);
   }
 
