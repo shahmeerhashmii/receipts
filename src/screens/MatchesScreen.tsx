@@ -83,7 +83,11 @@ export function MatchesScreen() {
     setSchedForm({ game_id: 'fifa', player_a: '', player_b: '', scheduled_at: '' });
   }
 
-  const myCoinBalance = currentLeague.members.find((m) => m.id === userId)?.coins || 0;
+  // When changing a pick, the existing stake is refunded before the new one is validated.
+  const existingPickStake = selectedScheduled
+    ? state.picks.find((p) => p.scheduled_match_id === selectedScheduled.id && p.picker_id === userId && p.status === 'open')?.stake || 0
+    : 0;
+  const myCoinBalance = (currentLeague.members.find((m) => m.id === userId)?.coins || 0) + existingPickStake;
   const maxPickStake = maxStake(myCoinBalance);
 
   const pickMult = (selectedScheduled && pickForm.pickedPlayerId)
@@ -141,21 +145,8 @@ export function MatchesScreen() {
                     className="btn btn-ghost"
                     style={{ width: '100%', height: 32, minHeight: 32, fontSize: 12 }}
                     onClick={() => {
-                      // Refund old pick then reopen (rpc_make_pick handles this server-side;
-                      // in demo mode replicate the same: remove old pick and refund coins)
-                      demoStore.setState((s) => ({
-                        ...s,
-                        leagues: s.leagues.map((l) => {
-                          if (l.id !== currentLeague!.id) return l;
-                          return {
-                            ...l,
-                            members: l.members.map((m) =>
-                              m.id === userId ? { ...m, coins: m.coins + myPick.stake } : m
-                            ),
-                          };
-                        }),
-                        picks: s.picks.filter((p) => p.id !== myPick.id),
-                      }));
+                      // The old pick is replaced and refunded atomically when the new pick
+                      // is submitted (rpc_make_pick / demoStore.makePick).
                       setPickForm({ pickedPlayerId: '', stake: myPick.stake });
                       setSelectedScheduledId(sched.id);
                       setPickOpen(true);

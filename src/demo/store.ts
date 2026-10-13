@@ -747,18 +747,25 @@ export const demoStore = {
   makePick: (pick: Omit<Pick, 'id' | 'created_at' | 'status'>) => {
     const id = `pick-${Date.now()}`;
     const newPick: Pick = { ...pick, id, created_at: new Date().toISOString(), status: 'open' };
-    // Deduct stake
+    // Mirrors rpc_make_pick: replace any existing open pick on this match (refunding its
+    // stake), then deduct the new stake.
     setState((s) => {
+      const replaced = s.picks.filter(
+        (p) => p.scheduled_match_id === pick.scheduled_match_id &&
+               p.picker_id === pick.picker_id && p.status === 'open'
+      );
+      const refund = replaced.reduce((sum, p) => sum + p.stake, 0);
       const leagues = s.leagues.map((l) => {
         if (l.id !== pick.league_id) return l;
         return {
           ...l,
           members: l.members.map((m) =>
-            m.id === pick.picker_id ? { ...m, coins: Math.max(0, m.coins - pick.stake) } : m
+            m.id === pick.picker_id ? { ...m, coins: Math.max(0, m.coins + refund - pick.stake) } : m
           ),
         };
       });
-      return { ...s, leagues, picks: [...s.picks, newPick] };
+      const picks = s.picks.filter((p) => !replaced.includes(p));
+      return { ...s, leagues, picks: [...picks, newPick] };
     });
     return newPick;
   },

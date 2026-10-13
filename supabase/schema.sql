@@ -1117,6 +1117,7 @@ DECLARE
   v_coins      INT;
   v_max_stake  INT;
   v_pick_id    UUID;
+  v_refund     INT;
 BEGIN
   SELECT * INTO v_sched FROM scheduled_matches WHERE id = p_scheduled_match_id;
   IF NOT FOUND OR v_sched.status != 'open' THEN RAISE EXCEPTION 'match_not_open'; END IF;
@@ -1133,6 +1134,22 @@ BEGIN
     RAISE EXCEPTION 'players_can_only_back_themselves';
   END IF;
 
+  -- Change pick: remove any existing open pick and refund its stake first, so the
+  -- max-stake check below uses the restored balance. Any exception later in this
+  -- function rolls the refund back with the rest of the transaction.
+  WITH removed AS (
+    DELETE FROM picks
+    WHERE scheduled_match_id = p_scheduled_match_id AND picker_id = auth.uid()
+      AND status = 'open'
+    RETURNING stake
+  )
+  SELECT COALESCE(SUM(stake), 0) INTO v_refund FROM removed;
+
+  IF v_refund > 0 THEN
+    UPDATE league_members SET coins = coins + v_refund
+    WHERE league_id = v_sched.league_id AND user_id = auth.uid();
+  END IF;
+
   SELECT coins INTO v_coins
   FROM league_members WHERE league_id = v_sched.league_id AND user_id = auth.uid();
 
@@ -1144,14 +1161,6 @@ BEGIN
   IF p_multiplier < 1.1 OR p_multiplier > 5.0 THEN
     RAISE EXCEPTION 'invalid_multiplier';
   END IF;
-
-  -- Cancel any existing pick for this match by this picker (change pick)
-  DELETE FROM picks
-  WHERE scheduled_match_id = p_scheduled_match_id AND picker_id = auth.uid()
-    AND status = 'open';
-
-  -- Refund previous stake was deducted already -- restore it first
-  -- (handled by client calling change-pick flow which calls this directly)
 
   -- Deduct new stake
   UPDATE league_members
