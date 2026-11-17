@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { BottomSheet } from '../components/BottomSheet';
 import { Avatar } from '../components/Avatar';
-import { parsePuzzle, validatePuzzleDate } from '../rules/puzzles';
+import { parseMany, validatePuzzleDate, torontoToday, PUZZLE_LABELS, formatPuzzleScore } from '../rules/puzzles';
 import { IconChevronRight } from '@tabler/icons-react';
 import type { Match } from '../demo/store';
 
@@ -34,6 +34,7 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
   });
   const [puzzleText, setPuzzleText] = useState('');
   const [puzzleError, setPuzzleError] = useState('');
+  const [puzzlePosted, setPuzzlePosted] = useState<string[]>([]);
   const [duplicateMatch, setDuplicateMatch] = useState<Match | null>(null);
   const [submitted, setSubmitted] = useState(false);
 
@@ -49,6 +50,7 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
     setForm({ game_id: 'fifa', opponent_id: '', result: '', score_a: '', score_b: '', stars_a: '', stars_b: '', hasFifaTeams: false });
     setPuzzleText('');
     setPuzzleError('');
+    setPuzzlePosted([]);
     setDuplicateMatch(null);
     setSubmitted(false);
     onClose();
@@ -99,37 +101,49 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
   }
 
   function handlePuzzlePaste() {
-    const parsed = parsePuzzle(puzzleText);
-    if (!parsed) {
-      setPuzzleError('Could not parse puzzle. Paste the full share text.');
+    const parsed = parseMany(puzzleText);
+    if (parsed.length === 0) {
+      setPuzzleError('Could not read that. Paste the full share text from the game.');
       return;
     }
-    const today = new Date().toISOString().split('T')[0];
-    if (!validatePuzzleDate(parsed.type, parsed.puzzleNumber, today)) {
-      setPuzzleError(`Puzzle #${parsed.puzzleNumber} does not match today's date. Allowed within 1 day.`);
+    const today = torontoToday();
+    const posted: string[] = [];
+    const problems: string[] = [];
+    for (const p of parsed) {
+      const label = PUZZLE_LABELS[p.type];
+      if (!validatePuzzleDate(p.type, p.puzzleNumber, today)) {
+        problems.push(`${label} #${p.puzzleNumber} isn't today's puzzle.`);
+        continue;
+      }
+      const already = state.puzzleSubmissions.find(
+        (s) =>
+          s.league_id === currentLeague!.id &&
+          s.member_id === userId &&
+          s.game_id === p.type &&
+          s.puzzle_number === p.puzzleNumber
+      );
+      if (already) {
+        problems.push(`You already posted ${label} #${p.puzzleNumber}.`);
+        continue;
+      }
+      actions.submitPuzzle({
+        leagueId: currentLeague!.id,
+        gameId: p.type,
+        puzzleNumber: p.puzzleNumber,
+        puzzleDate: today,
+        score: p.score,
+        hardMode: p.hardMode,
+        emojiGrid: p.emojiGrid,
+        rawText: p.rawText,
+      });
+      posted.push(`${label} ${formatPuzzleScore(p.type, p.score)}`);
+    }
+    if (posted.length === 0) {
+      setPuzzleError(problems.join(' '));
       return;
     }
-    const already = state.puzzleSubmissions.find(
-      (s) =>
-        s.league_id === currentLeague!.id &&
-        s.member_id === userId &&
-        s.game_id === parsed.type &&
-        s.puzzle_number === parsed.puzzleNumber
-    );
-    if (already) {
-      setPuzzleError(`You already posted ${parsed.type} #${parsed.puzzleNumber} today.`);
-      return;
-    }
-    actions.submitPuzzle({
-      leagueId: currentLeague!.id,
-      gameId: parsed.type,
-      puzzleNumber: parsed.puzzleNumber,
-      puzzleDate: today,
-      score: parsed.score,
-      hardMode: parsed.hardMode,
-      emojiGrid: parsed.emojiGrid,
-      rawText: puzzleText,
-    });
+    setPuzzlePosted(posted);
+    setPuzzleError(problems.join(' '));
     setSubmitted(true);
   }
 
@@ -147,8 +161,14 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
           <div style={{ fontSize: 40, marginBottom: 12 }}>✓</div>
           <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>Logged!</div>
           <div style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 24 }}>
-            {step === 'log_match' ? 'Waiting for confirmation from your opponent.' : 'Puzzle posted.'}
+            {step === 'log_match' ? 'Waiting for confirmation from your opponent.' : puzzlePosted.length > 1 ? `${puzzlePosted.length} puzzles posted.` : 'Puzzle posted.'}
           </div>
+          {puzzlePosted.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
+              {puzzlePosted.map((p) => <div key={p} className="num" style={{ fontSize: 14 }}>{p}</div>)}
+              {puzzleError && <div style={{ color: 'var(--muted)', fontSize: 12 }}>{puzzleError}</div>}
+            </div>
+          )}
           <button className="btn btn-primary" onClick={handleClose}>Done</button>
         </div>
       ) : duplicateMatch ? (
@@ -203,7 +223,7 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
           >
             <div>
               <div style={{ fontWeight: 600 }}>Paste a puzzle</div>
-              <div style={{ color: 'var(--muted)', fontSize: 13 }}>Wordle, Connections, Krillion, Ballpark</div>
+              <div style={{ color: 'var(--muted)', fontSize: 13 }}>Ballpark, Letter Burn, Eyeball, Wordle...</div>
             </div>
             <IconChevronRight size={18} color="var(--muted)" />
           </button>
@@ -223,12 +243,12 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
         <div style={{ padding: '8px 0 16px' }}>
           <div className="sheet-title" style={{ padding: '0 0 12px' }}>Paste a puzzle</div>
           <div style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 12 }}>
-            Paste the share text from Wordle, Connections, Krillion, or Ballpark.
+            Paste the share text from Ballpark, Letter Burn, Eyeball, Wordle, Connections or Krillion. Got all three BabaFox results? Paste them together and they all post at once.
           </div>
           <textarea
             className="input"
             style={{ minHeight: 120, resize: 'vertical', fontFamily: 'var(--font-mono)', fontSize: 13 }}
-            placeholder="Wordle 1,234 3/6..."
+            placeholder={"Ballpark #43 ⚾\n1,962 ft · 2 homers\n\nLetter Burn #17 · 290\n\nEyeball #12 · 46.3 px off"}
             value={puzzleText}
             onChange={(e) => { setPuzzleText(e.target.value); setPuzzleError(''); }}
           />

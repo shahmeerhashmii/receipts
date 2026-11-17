@@ -1,6 +1,34 @@
 // Daily puzzle parsing and scoring rules
 
-export type PuzzleType = 'wordle' | 'connections' | 'krillion' | 'ballpark';
+export type PuzzleType = 'wordle' | 'connections' | 'krillion' | 'ballpark' | 'letterburn' | 'eyeball';
+
+/** BabaFox games (babafox.com). Every one flips to a new puzzle at midnight Toronto time. */
+export const BABAFOX_GAMES: PuzzleType[] = ['ballpark', 'letterburn', 'eyeball'];
+
+export const PUZZLE_LABELS: Record<PuzzleType, string> = {
+  wordle: 'Wordle', connections: 'Connections', krillion: 'Krillion',
+  ballpark: 'Ballpark', letterburn: 'Letter Burn', eyeball: 'Eyeball',
+};
+
+/** Today's date (YYYY-MM-DD) on the Toronto calendar, which is when every puzzle here flips. */
+export function torontoToday(d: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+}
+
+/**
+ * Scores are stored as whole numbers. Eyeball reports pixels to one decimal,
+ * so it is stored in tenths of a pixel (18.6 px is stored as 186).
+ */
+export function formatPuzzleScore(type: string, score: number): string {
+  switch (type) {
+    case 'ballpark': return `${score.toLocaleString('en-US')} ft`;
+    case 'letterburn': return `${score.toLocaleString('en-US')} pts`;
+    case 'eyeball': return `${(score / 10).toFixed(1)} px`;
+    case 'wordle': return score >= 7 ? 'X/6' : `${score}/6`;
+    case 'connections': return `${score} ${score === 1 ? 'mistake' : 'mistakes'}`;
+    default: return String(score);
+  }
+}
 
 /** Reference dates for puzzle number calculation */
 const PUZZLE_REFS: Record<PuzzleType, { date: string; number: number }> = {
@@ -8,6 +36,8 @@ const PUZZLE_REFS: Record<PuzzleType, { date: string; number: number }> = {
   connections: { date: '2023-06-12', number: 1 },
   krillion: { date: '2026-10-03', number: 80 },
   ballpark: { date: '2026-10-05', number: 1 },
+  letterburn: { date: '2026-11-01', number: 1 },
+  eyeball: { date: '2026-11-06', number: 1 },
 };
 
 function daysDiff(dateA: string, dateB: string): number {
@@ -36,7 +66,7 @@ export function validatePuzzleDate(
 export interface ParsedPuzzle {
   type: PuzzleType;
   puzzleNumber: number;
-  score: number; // lower=better for wordle/connections, higher=better for krillion/ballpark
+  score: number; // lower=better for wordle/connections/eyeball, higher=better for krillion/ballpark/letterburn
   hardMode?: boolean; // wordle
   emojiGrid?: string;
   rawText: string;
@@ -102,17 +132,54 @@ function parseKrillion(text: string): ParsedPuzzle | null {
   return { type: 'krillion', puzzleNumber, score, rawText: text };
 }
 
-/** Parse Ballpark share text */
+/**
+ * Parse Ballpark share text. Current format (feet out of 2,250):
+ *   Ballpark #43 ⚾
+ *   1,962 ft · 2 homers
+ *   ⚾🟢🟡⚪🔴
+ *   ballpark.babafox.com
+ * Easy mode ("4/5 right") counts each right answer as a 450 ft homer.
+ * The old "/500" format is still read so pasted history keeps working.
+ */
 function parseBallpark(text: string): ParsedPuzzle | null {
   const matchPuzz = text.match(/Ballpark\s+#(\d+)/i);
   if (!matchPuzz) return null;
   const puzzleNumber = parseInt(matchPuzz[1], 10);
 
-  const scoreLine = text.match(/(\d+)\/500/);
-  if (!scoreLine) return null;
-  const score = parseInt(scoreLine[1], 10);
+  const feet = text.match(/([\d,]+)\s*ft/i);
+  if (feet) return { type: 'ballpark', puzzleNumber, score: parseInt(feet[1].replace(/,/g, ''), 10), rawText: text };
 
-  return { type: 'ballpark', puzzleNumber, score, rawText: text };
+  const easy = text.match(/(\d)\s*\/\s*5\s+right/i);
+  if (easy) return { type: 'ballpark', puzzleNumber, score: parseInt(easy[1], 10) * 450, rawText: text };
+
+  const legacy = text.match(/(\d+)\/500/);
+  if (legacy) return { type: 'ballpark', puzzleNumber, score: parseInt(legacy[1], 10), rawText: text };
+  return null;
+}
+
+/**
+ * Parse Letter Burn share text (higher score wins):
+ *   Letter Burn #17 · 290
+ *   🟧⬛🟧...
+ *   5/5 · 14 saved · 1 double · hot Q saved · 0 borrowed
+ */
+function parseLetterBurn(text: string): ParsedPuzzle | null {
+  const m = text.match(/Letter\s*Burn\s+#(\d+)\s*[·\-|:]?\s*([\d,]+)/i);
+  if (!m) return null;
+  const lines = text.split('\n');
+  const grid = lines.filter((l) => /[\u{1F7E7}\u{2B1B}\u{1F525}\u{1F4A5}]/u.test(l)).join('\n');
+  return { type: 'letterburn', puzzleNumber: parseInt(m[1], 10), score: parseInt(m[2].replace(/,/g, ''), 10), emojiGrid: grid || undefined, rawText: text };
+}
+
+/**
+ * Parse Eyeball share text (fewest pixels off wins):
+ *   Eyeball #12 · 46.3 px off
+ *   Sharp · rounds 21.0 / 25.3
+ */
+function parseEyeball(text: string): ParsedPuzzle | null {
+  const m = text.match(/Eyeball\s+#(\d+)\s*[·\-|:]?\s*([\d.]+)\s*px/i);
+  if (!m) return null;
+  return { type: 'eyeball', puzzleNumber: parseInt(m[1], 10), score: Math.round(parseFloat(m[2]) * 10), rawText: text };
 }
 
 /** Auto-detect and parse a puzzle from share text */
@@ -122,12 +189,63 @@ export function parsePuzzle(text: string): ParsedPuzzle | null {
   if (/^Connections\s+Puzzle/i.test(t)) return parseConnections(t);
   if (/^Krillion\s+#/i.test(t)) return parseKrillion(t);
   if (/^Ballpark\s+#/i.test(t)) return parseBallpark(t);
+  if (/^Letter\s*Burn\s+#/i.test(t)) return parseLetterBurn(t);
+  if (/^Eyeball\s+#/i.test(t)) return parseEyeball(t);
   return null;
+}
+
+/**
+ * Split a paste that holds several share texts (for example all three BabaFox
+ * results copied one after another) and parse each one. Unknown chunks are skipped.
+ */
+export function parseMany(text: string): ParsedPuzzle[] {
+  const starts = /^(Wordle\s+[\d,]+|Connections\s+Puzzle|Krillion\s+#|Ballpark\s+#|Letter\s*Burn\s+#|Eyeball\s+#)/i;
+  const lines = text.replace(/\r/g, '').split('\n');
+  const chunks: string[] = [];
+  let cur: string[] = [];
+  for (const line of lines) {
+    if (starts.test(line.trim()) && cur.some((l) => l.trim())) { chunks.push(cur.join('\n')); cur = []; }
+    cur.push(line);
+  }
+  if (cur.some((l) => l.trim())) chunks.push(cur.join('\n'));
+  const out: ParsedPuzzle[] = [];
+  for (const c of chunks) { const p = parsePuzzle(c); if (p) out.push(p); }
+  return out;
+}
+
+/**
+ * Ratings for one puzzle game, worked out from the submission history.
+ * Every finished day (before today, Toronto time) is settled in date order with settlePuzzleDay.
+ */
+export function puzzleRatingsFromSubmissions(
+  subs: { member_id: string; game_id: string; puzzle_date: string; score: number; hard_mode?: boolean }[],
+  gameId: PuzzleType,
+  today: string = torontoToday()
+): Map<string, { rating: number; days: number; lastDate: string }> {
+  const out = new Map<string, { rating: number; days: number; lastDate: string }>();
+  const byDay = new Map<string, typeof subs>();
+  for (const s of subs) {
+    if (s.game_id !== gameId || s.puzzle_date >= today) continue;
+    if (!byDay.has(s.puzzle_date)) byDay.set(s.puzzle_date, []);
+    byDay.get(s.puzzle_date)!.push(s);
+  }
+  for (const day of [...byDay.keys()].sort()) {
+    const daySubs = byDay.get(day)!;
+    const res = settlePuzzleDay(
+      daySubs.map((s) => ({ memberId: s.member_id, score: s.score, hardMode: s.hard_mode, currentRating: out.get(s.member_id)?.rating ?? 1000, matchCount: out.get(s.member_id)?.days ?? 0 })),
+      gameId
+    );
+    for (const r of res) {
+      const prev = out.get(r.memberId);
+      out.set(r.memberId, { rating: r.newRating, days: (prev?.days ?? 0) + 1, lastDate: day });
+    }
+  }
+  return out;
 }
 
 /** Does lower score win for this puzzle type? */
 export function lowerWins(type: PuzzleType): boolean {
-  return type === 'wordle' || type === 'connections';
+  return type === 'wordle' || type === 'connections' || type === 'eyeball';
 }
 
 /**

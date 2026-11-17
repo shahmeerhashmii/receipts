@@ -70,3 +70,20 @@ All copy uses regular hyphens (-) or "and." No em dashes anywhere in the codebas
 
 **Decision:** `OnboardingScreen` calls `rpc_create_league` / `rpc_join_league` directly in live mode and `demoStore.createLeague` / `joinLeagueByCode` in demo mode (no `actions` wrapper).
 **Reason:** Onboarding is the one place where no current league exists yet, so the league-scoped `actions` interface does not apply.
+
+## BabaFox games (Nov 2026)
+
+**Decision:** Added Letter Burn and Eyeball as puzzle games, and moved Ballpark to its current share format (feet out of 2,250).
+**Reason:** All three BabaFox games now post from their real share text. The old Ballpark "/500" format is still read so older pastes keep working.
+
+**Decision:** Eyeball scores are stored in tenths of a pixel (46.3 px is stored as 463).
+**Reason:** `puzzle_submissions.score` is an INT. Tenths keep the precision Eyeball reports without a schema type change.
+
+**Decision:** Ballpark Easy mode counts each right answer as 450 ft.
+**Reason:** Easy mode shares "4/5 right" instead of feet. 450 ft is a full-distance hit, so an Easy player can't outscore a perfect Normal round.
+
+**Decision:** Puzzle ratings are worked out from the submission history (every finished Toronto day settled in order with `settlePuzzleDay`) when a game has no rated matches.
+**Reason:** The server settles puzzle coins but never wrote puzzle ratings, so puzzle tabs showed everyone at 1000. Deriving them keeps the history as the source of truth, the same rule as match ratings.
+
+**Decision:** Puzzle dates use the Toronto calendar instead of UTC.
+**Reason:** Every puzzle flips at midnight Toronto time. After 7 p.m. Eastern the UTC date was already tomorrow.

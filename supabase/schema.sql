@@ -73,7 +73,9 @@ INSERT INTO games (id, name, type) VALUES
   ('wordle',       'Wordle',                  'puzzle'),
   ('connections',  'Connections',             'puzzle'),
   ('krillion',     'Krillion',                'puzzle'),
-  ('ballpark',     'Ballpark',                'puzzle')
+  ('ballpark',     'Ballpark',                'puzzle'),
+  ('letterburn',   'Letter Burn',             'puzzle'),
+  ('eyeball',      'Eyeball',                 'puzzle')
 ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS league_games (
@@ -1898,8 +1900,8 @@ BEGIN
     SELECT DISTINCT game_id FROM puzzle_submissions
     WHERE league_id = p_league_id AND puzzle_date = p_date
   LOOP
-    -- Lower wins: wordle, connections; higher wins: krillion, ballpark
-    IF v_game_id IN ('wordle', 'connections') THEN
+    -- Lower wins: wordle, connections, eyeball; higher wins: krillion, ballpark, letterburn
+    IF v_game_id IN ('wordle', 'connections', 'eyeball') THEN
       SELECT MIN(score) INTO v_min_score
       FROM puzzle_submissions
       WHERE league_id = p_league_id AND puzzle_date = p_date AND game_id = v_game_id;

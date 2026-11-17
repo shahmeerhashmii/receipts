@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Avatar } from '../components/Avatar';
 import { recalculateRatings, inactivityAdjustment } from '../rules/elo';
+import { torontoToday, formatPuzzleScore, puzzleRatingsFromSubmissions, BABAFOX_GAMES, type PuzzleType } from '../rules/puzzles';
 import { IconTarget } from '@tabler/icons-react';
 import { IconChevronRight } from '@tabler/icons-react';
 
@@ -14,10 +15,12 @@ const GAME_LABELS: Record<string, string> = {
   connections: 'Connections',
   krillion: 'Krillion',
   ballpark: 'Ballpark',
+  letterburn: 'Letter Burn',
+  eyeball: 'Eyeball',
 };
 
 // Lower-wins puzzle types
-const LOWER_WINS = new Set(['wordle', 'connections']);
+const LOWER_WINS = new Set(['wordle', 'connections', 'eyeball']);
 
 export function RankingsScreen() {
   const { currentLeague, memberStats, state, viewProfile } = useApp();
@@ -30,7 +33,7 @@ export function RankingsScreen() {
   );
   const allRatings = recalculateRatings(leagueMatches);
   const now = new Date().toISOString();
-  const today = new Date().toISOString().split('T')[0];
+  const today = torontoToday();
 
   const tabs = [
     { id: 'overall', label: 'Overall' },
@@ -44,6 +47,23 @@ export function RankingsScreen() {
   function getRankedMembers(tab: string) {
     if (tab === 'overall') {
       return [...memberStats].sort((a, b) => b.overallRating - a.overallRating);
+    }
+    // Puzzle tab with no rated matches: work ratings out from the daily submissions
+    const isPuzzle = currentLeague!.games.find((g) => g.id === tab)?.type === 'puzzle';
+    const hasRated = currentLeague!.members.some((m) => (allRatings.get(m.id)?.get(tab)?.matchCount || 0) > 0);
+    if (isPuzzle && !hasRated) {
+      const pr = puzzleRatingsFromSubmissions(
+        state.puzzleSubmissions.filter((s) => s.league_id === currentLeague!.id),
+        tab as PuzzleType,
+        today
+      );
+      return currentLeague!.members
+        .map((member) => {
+          const r = pr.get(member.id);
+          const rating = r?.rating ?? 1000;
+          return { member, rating, displayRating: rating, matchCount: r?.days ?? 0, lastPlayedAt: r?.lastDate ?? '' };
+        })
+        .sort((a, b) => b.displayRating - a.displayRating);
     }
     // Per-game tab
     return currentLeague!.members
@@ -107,6 +127,23 @@ export function RankingsScreen() {
 
       <div className="screen">
         {/* Today's puzzle leaderboard for puzzle tabs */}
+        {isPuzzleTab && BABAFOX_GAMES.includes(activeTab as PuzzleType) && (() => {
+          const playedAll = currentLeague.members.filter((m) =>
+            BABAFOX_GAMES.every((g) => state.puzzleSubmissions.some((s) => s.league_id === currentLeague.id && s.member_id === m.id && s.game_id === g && s.puzzle_date === today))
+          );
+          const url = { ballpark: 'https://ballpark.babafox.com', letterburn: 'https://letterburn.babafox.com', eyeball: 'https://eyeball.babafox.com' }[activeTab as 'ballpark' | 'letterburn' | 'eyeball'];
+          return (
+            <div className="card" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>BabaFox den sweep</div>
+                <div style={{ color: 'var(--muted)', fontSize: 12, marginTop: 2 }}>
+                  {playedAll.length === 0 ? 'Nobody has played all three today yet.' : `Played all three today: ${playedAll.map((m) => m.display_name).join(', ')}`}
+                </div>
+              </div>
+              <a className="btn btn-ghost" href={url} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>Play</a>
+            </div>
+          );
+        })()}
         {isPuzzleTab && (
           <div style={{ marginBottom: 16 }}>
             <div className="section-title">Today</div>
@@ -129,7 +166,7 @@ export function RankingsScreen() {
                       )}
                     </div>
                     <div className="num" style={{ fontSize: 15, fontWeight: 700, color: idx === 0 ? 'var(--green)' : 'var(--text)', flexShrink: 0 }}>
-                      {sub.score}
+                      {formatPuzzleScore(sub.game_id, sub.score)}
                     </div>
                   </div>
                 );
@@ -201,7 +238,7 @@ export function RankingsScreen() {
                       <span style={{ fontWeight: 600, fontSize: 16, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {member.display_name}
                       </span>
-                      {matchCount !== null && matchCount < 10 && (
+                      {matchCount !== null && matchCount < (isPuzzleTab ? 3 : 10) && (
                         <span className="status-badge status-pending" style={{ fontSize: 10 }}>New</span>
                       )}
                       {isBountyHolder && (
@@ -211,7 +248,7 @@ export function RankingsScreen() {
                       )}
                     </div>
                     <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 2 }}>
-                      {wins}W-{losses}L{draws > 0 ? `-${draws}D` : ''}
+                      {isPuzzleTab ? `${matchCount ?? 0} ${matchCount === 1 ? 'day' : 'days'} played` : `${wins}W-${losses}L${draws > 0 ? `-${draws}D` : ''}`}
                     </div>
                   </div>
                   <div style={{ textAlign: 'right', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -241,12 +278,12 @@ export function RankingsScreen() {
                   <span style={{ fontWeight: 600, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {member.display_name}
                   </span>
-                  {matchCount !== null && matchCount < 10 && (
+                  {matchCount !== null && matchCount < (isPuzzleTab ? 3 : 10) && (
                     <span className="status-badge status-pending" style={{ fontSize: 10 }}>New</span>
                   )}
                 </div>
                 <div style={{ color: 'var(--muted)', fontSize: 12 }}>
-                  {wins}W-{losses}L{draws > 0 ? `-${draws}D` : ''}
+                  {isPuzzleTab ? `${matchCount ?? 0} ${matchCount === 1 ? 'day' : 'days'} played` : `${wins}W-${losses}L${draws > 0 ? `-${draws}D` : ''}`}
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>

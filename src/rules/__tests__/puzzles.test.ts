@@ -167,3 +167,41 @@ describe('settlePuzzleDay - pairwise', () => {
     expect(b.ratingChange).toBeLessThan(0);
   });
 });
+
+import { parseMany, formatPuzzleScore, puzzleRatingsFromSubmissions } from '../puzzles';
+
+describe('BabaFox share texts', () => {
+  it('reads Ballpark in feet', () => {
+    const p = parseMany('Ballpark #43 ⚾\n1,962 ft · 2 homers\n⚾🟢🟡⚪🔴\nballpark.babafox.com');
+    expect(p).toHaveLength(1);
+    expect(p[0]).toMatchObject({ type: 'ballpark', puzzleNumber: 43, score: 1962 });
+  });
+  it('reads Ballpark easy mode as 450 ft per right answer', () => {
+    expect(parseMany('Ballpark #43 · Easy mode ⚾\n4/5 right\n✅✅❌✅✅')[0].score).toBe(1800);
+  });
+  it('reads Letter Burn', () => {
+    const p = parseMany('Letter Burn #17 · 290\n🟧⬛🟧🟧🟧🟧🟧🟧🟧🟧🟧🟧🟧\n🟧🟧🟧🟧🟧🟧🟧🟧🟧🔥🟧🟧🟧\n5/5 · 14 saved · 1 double · 0 borrowed\nletterburn.babafox.com');
+    expect(p[0]).toMatchObject({ type: 'letterburn', puzzleNumber: 17, score: 290 });
+  });
+  it('reads Eyeball in tenths of a pixel, lower wins', () => {
+    const p = parseMany('Eyeball #12 · 46.3 px off\nSharp · rounds 21.0 / 25.3\neyeball.babafox.com');
+    expect(p[0]).toMatchObject({ type: 'eyeball', puzzleNumber: 12, score: 463 });
+    expect(formatPuzzleScore('eyeball', 463)).toBe('46.3 px');
+    expect(lowerWins('eyeball')).toBe(true);
+  });
+  it('splits all three results pasted together', () => {
+    const text = 'Ballpark #43 ⚾\n1,962 ft\nballpark.babafox.com\nLetter Burn #17 · 290\n5/5 · 14 saved\nEyeball #12 · 46.3 px off\nSharp';
+    expect(parseMany(text).map((p) => p.type)).toEqual(['ballpark', 'letterburn', 'eyeball']);
+  });
+  it('settles finished days into ratings', () => {
+    const subs = [
+      { member_id: 'a', game_id: 'eyeball', puzzle_date: '2026-11-10', score: 300 },
+      { member_id: 'b', game_id: 'eyeball', puzzle_date: '2026-11-10', score: 500 },
+      { member_id: 'a', game_id: 'eyeball', puzzle_date: '2026-11-17', score: 900 },
+    ];
+    const r = puzzleRatingsFromSubmissions(subs, 'eyeball', '2026-11-17');
+    expect(r.get('a')!.rating).toBeGreaterThan(1000);
+    expect(r.get('b')!.rating).toBeLessThan(1000);
+    expect(r.get('a')!.days).toBe(1);
+  });
+});

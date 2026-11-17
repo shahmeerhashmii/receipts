@@ -64,6 +64,8 @@ const GAMES = [
   { id: 'connections', name: 'Connections', type: 'puzzle' },
   { id: 'krillion', name: 'Krillion', type: 'puzzle' },
   { id: 'ballpark', name: 'Ballpark', type: 'puzzle' },
+  { id: 'letterburn', name: 'Letter Burn', type: 'puzzle' },
+  { id: 'eyeball', name: 'Eyeball', type: 'puzzle' },
 ];
 
 function randomBetween(a: number, b: number) {

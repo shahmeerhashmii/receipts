@@ -7,7 +7,7 @@ import { recalculateRatings, inactivityAdjustment } from '../rules/elo';
 
 const GAME_LABELS: Record<string, string> = {
   fifa: 'FIFA', gp_8ball: '8 Ball', gp_cup_pong: 'Cup Pong', gp_word_hunt: 'Word Hunt',
-  wordle: 'Wordle', connections: 'Connections', krillion: 'Krillion', ballpark: 'Ballpark',
+  wordle: 'Wordle', connections: 'Connections', krillion: 'Krillion', ballpark: 'Ballpark', letterburn: 'Letter Burn', eyeball: 'Eyeball',
 };
 
 const BADGE_ICONS: Record<string, string> = {

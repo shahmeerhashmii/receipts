@@ -8,6 +8,8 @@ export type GameId =
   | 'connections'
   | 'krillion'
   | 'ballpark'
+  | 'letterburn'
+  | 'eyeball'
   | string; // custom games
 
 export type MatchResult = 'win' | 'loss' | 'draw';
@@ -49,10 +51,10 @@ export interface PuzzleSubmission {
   id: string;
   league_id: string;
   member_id: string;
-  game_id: 'wordle' | 'connections' | 'krillion' | 'ballpark';
+  game_id: 'wordle' | 'connections' | 'krillion' | 'ballpark' | 'letterburn' | 'eyeball';
   puzzle_number: number;
   puzzle_date: string; // YYYY-MM-DD
-  score: number; // lower wins for wordle/connections, higher for krillion/ballpark
+  score: number; // lower wins for wordle/connections/eyeball, higher for krillion/ballpark/letterburn (eyeball stored in tenths of a px)
   hard_mode?: boolean; // wordle only
   emoji_grid?: string;
   raw_text: string;
