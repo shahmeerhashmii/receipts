@@ -14,7 +14,10 @@ Every member has a separate Elo-style rating for each game, starting at 1000. Ra
 - **K factor:** 40 for the first 10 matches in a game, 24 thereafter.
 - **FIFA handicap:** Log the star rating of each team (0.5 to 5 stars). The higher the star gap, the bigger the underdog boost for the weaker-team player.
 - **Margin multiplier:** Enter the score to apply 1.0 (1-goal diff), 1.15 (2-goal diff), or 1.3 (3+ goal diff).
-- **Daily puzzles:** Wordle, Connections, Krillion, Ballpark. Each puzzle day settles at midnight Toronto time. Every pair of members who played is a mini Elo match.
+- **Daily puzzles:** Ballpark, Letter Burn and Eyeball from [BabaFox](https://babafox.com), plus Wordle, Connections and Krillion. Paste the share text and it posts; paste all three BabaFox results together and they post at once. Each puzzle day settles at midnight Toronto time. Every pair of members who played is a mini Elo match, and puzzle ratings are worked out from the full submission history.
+  - Ballpark scores in feet (up to 2,250 a day, higher wins). Easy mode counts 450 ft per right answer.
+  - Letter Burn uses its points total (higher wins).
+  - Eyeball uses total pixels off (lower wins), stored in tenths of a pixel.
 - **Overall rating:** Weighted average across games, using recent-60-day match counts (capped at 10) as weights.
 
 ### Coins
@@ -66,6 +69,10 @@ npm run build
 ```
 
 ---
+
+## Updating an existing database
+
+If your Supabase project was set up before Letter Burn and Eyeball were added, run `supabase/migrations/2026-11-17_babafox_games.sql` in the SQL Editor, then re-run the `_settle_puzzle_day` function block from `schema.sql`.
 
 ## Supabase setup
 

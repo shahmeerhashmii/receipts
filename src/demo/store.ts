@@ -1,4 +1,5 @@
 // Demo mode store - localStorage-backed state management
+import { torontoToday, expectedPuzzleNumber, type PuzzleType } from '../rules/puzzles';
 import { createDemoLeagues, seedMatchHistory, GAMES } from './seed';
 
 export { AVATAR_COLORS } from './seed';
@@ -175,6 +176,47 @@ export interface MemberStats {
   netWorth: number;
 }
 
+// Saved demo data from before Letter Burn and Eyeball existed: add them to every league.
+function addBabaFoxGames(state: DemoState): DemoState {
+  const extra = [
+    { id: 'letterburn', name: 'Letter Burn', type: 'puzzle' as const },
+    { id: 'eyeball', name: 'Eyeball', type: 'puzzle' as const },
+  ];
+  state.leagues = state.leagues.map((l) => ({
+    ...l,
+    games: [...l.games, ...extra.filter((g) => !l.games.some((x) => x.id === g.id))],
+  }));
+  return state;
+}
+
+// A week of BabaFox results so the puzzle tabs have something to show in demo mode.
+function seedBabaFoxPuzzles(leagues: { id: string; members: { id: string }[] }[]): PuzzleSubmission[] {
+  const out: PuzzleSubmission[] = [];
+  const refs: Record<string, string> = { ballpark: '2026-10-05', letterburn: '2026-11-01', eyeball: '2026-11-06' };
+  const now = new Date();
+  for (const league of leagues) {
+    league.members.forEach((m, mi) => {
+      for (let d = 7; d >= 0; d--) {
+        const date = torontoToday(new Date(now.getTime() - d * 86400000));
+        for (const game of ['ballpark', 'letterburn', 'eyeball']) {
+          if (Math.random() < 0.3 || (d === 0 && m.id === 'demo-user')) continue;
+          const skill = 1 - mi * 0.06;
+          const score = game === 'ballpark' ? Math.round((1300 + Math.random() * 900) * skill)
+            : game === 'letterburn' ? Math.round((180 + Math.random() * 140) * skill)
+            : Math.round((30 + Math.random() * 60) / skill * 10);
+          const num = expectedPuzzleNumber(game as PuzzleType, date);
+          out.push({
+            id: `seed-${league.id}-${m.id}-${game}-${date}`, league_id: league.id, member_id: m.id, game_id: game,
+            puzzle_number: num, puzzle_date: date, score,
+            raw_text: `${game} #${num}`, submitted_at: new Date(date + 'T14:00:00Z').toISOString(),
+          });
+        }
+      }
+    });
+  }
+  return out;
+}
+
 function loadState(): DemoState | null {
   try {
     // Migrate from the old key once, then remove it.
@@ -185,7 +227,7 @@ function loadState(): DemoState | null {
     }
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw);
+    return addBabaFoxGames(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -331,6 +373,8 @@ function initializeDemo(): DemoState {
       { id: 'connections', name: 'Connections', type: 'puzzle' },
       { id: 'krillion', name: 'Krillion', type: 'puzzle' },
       { id: 'ballpark', name: 'Ballpark', type: 'puzzle' },
+      { id: 'letterburn', name: 'Letter Burn', type: 'puzzle' },
+      { id: 'eyeball', name: 'Eyeball', type: 'puzzle' },
     ],
     members: l.members.map((m) => ({
       ...m,
@@ -342,7 +386,7 @@ function initializeDemo(): DemoState {
     initialized: true,
     leagues: fullLeagues,
     matches: allMatches,
-    puzzleSubmissions: [],
+    puzzleSubmissions: seedBabaFoxPuzzles(leagues),
     holdings,
     stockPriceHistory: [],
     events: eventSeeds,
@@ -726,6 +770,8 @@ export const demoStore = {
         { id: 'connections', name: 'Connections', type: 'puzzle' },
         { id: 'krillion', name: 'Krillion', type: 'puzzle' },
         { id: 'ballpark', name: 'Ballpark', type: 'puzzle' },
+        { id: 'letterburn', name: 'Letter Burn', type: 'puzzle' },
+        { id: 'eyeball', name: 'Eyeball', type: 'puzzle' },
       ],
       members: [member],
     };
