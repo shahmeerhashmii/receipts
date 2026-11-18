@@ -5,6 +5,7 @@ import { Avatar } from '../components/Avatar';
 import { parseMany, validatePuzzleDate, torontoToday, PUZZLE_LABELS, formatPuzzleScore } from '../rules/puzzles';
 import { IconChevronRight } from '@tabler/icons-react';
 import type { Match } from '../demo/store';
+import { recalculateRatings } from '../rules/elo';
 
 type LogStep = 'choose' | 'log_match' | 'paste_puzzle' | 'off_books';
 
@@ -37,6 +38,7 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
   const [puzzlePosted, setPuzzlePosted] = useState<string[]>([]);
   const [duplicateMatch, setDuplicateMatch] = useState<Match | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const [impact, setImpact] = useState<null | { game: string; me: { before: number; after: number; rankBefore: number; rankAfter: number }; them: { name: string; before: number; after: number }; coins: number; result: string }>(null);
 
   if (!currentLeague) return null;
 
@@ -53,6 +55,7 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
     setPuzzlePosted([]);
     setDuplicateMatch(null);
     setSubmitted(false);
+    setImpact(null);
     onClose();
   }
 
@@ -63,7 +66,7 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
       (m) =>
         m.league_id === currentLeague!.id &&
         m.game_id === form.game_id &&
-        m.status === 'pending' &&
+        (m.status === 'pending' || m.status === 'confirmed') &&
         m.logged_at > threeHoursAgo &&
         ((m.player_a_id === form.opponent_id && m.player_b_id === userId) ||
           (m.player_a_id === userId && m.player_b_id === form.opponent_id))
@@ -85,6 +88,24 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
     const scoreB = form.score_b ? parseInt(form.score_b) : undefined;
     const starsA = form.hasFifaTeams && form.stars_a ? parseFloat(form.stars_a) : undefined;
     const starsB = form.hasFifaTeams && form.stars_b ? parseFloat(form.stars_b) : undefined;
+
+    // Work out what this result does before it's sent, so the confirmation screen can show it
+    try {
+      const league = currentLeague!;
+      const now = new Date().toISOString();
+      const past = state.matches.filter((m) => m.league_id === league.id) as any[];
+      const next = [...past, { id: 'new', league_id: league.id, game_id: form.game_id, player_a_id: userId, player_b_id: form.opponent_id, result: form.result, score_a: scoreA, score_b: scoreB, stars_a: starsA, stars_b: starsB, status: 'confirmed', logged_at: now, confirmed_at: now, logged_by: userId }];
+      const before = recalculateRatings(past), after = recalculateRatings(next);
+      const r = (map: any, id: string) => map.get(id)?.get(form.game_id)?.rating ?? 1000;
+      const rank = (map: any, id: string) => { const all = league.members.map((m) => ({ id: m.id, r: r(map, m.id) })).sort((a, b) => b.r - a.r); return all.findIndex((x) => x.id === id) + 1; };
+      const today = now.slice(0, 10);
+      const playedToday = past.filter((m) => m.status === 'confirmed' && (m.confirmed_at || '').slice(0, 10) === today && (m.player_a_id === userId || m.player_b_id === userId)).length;
+      const coins = playedToday < 3 ? 20 + (form.result === 'win' ? 10 : 0) : 0;
+      const opp = league.members.find((m) => m.id === form.opponent_id);
+      setImpact({ game: league.games.find((g) => g.id === form.game_id)?.name || form.game_id, result: form.result,
+        me: { before: Math.round(r(before, userId)), after: Math.round(r(after, userId)), rankBefore: rank(before, userId), rankAfter: rank(after, userId) },
+        them: { name: opp?.display_name || 'Opponent', before: Math.round(r(before, form.opponent_id)), after: Math.round(r(after, form.opponent_id)) }, coins });
+    } catch { setImpact(null); }
 
     actions.logMatch({
       leagueId: currentLeague!.id,
@@ -156,12 +177,42 @@ export function LogSheet({ open, onClose }: { open: boolean; onClose: () => void
 
   return (
     <BottomSheet open={open} onClose={handleClose}>
-      {submitted ? (
+      {submitted && impact && step === 'log_match' ? (
+        <div style={{ padding: '20px 0 8px' }}>
+          <div style={{ textAlign: 'center', fontSize: 13, color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{impact.game} · {impact.result === 'win' ? 'You won' : impact.result === 'loss' ? 'You lost' : 'Draw'}</div>
+          <div style={{ textAlign: 'center', fontWeight: 800, fontSize: 22, margin: '6px 0 18px' }}>It counts. Receipts updated.</div>
+          {[
+            { label: 'You', ...impact.me },
+            { label: impact.them.name, before: impact.them.before, after: impact.them.after },
+          ].map((row: any) => {
+            const d = row.after - row.before;
+            return (
+              <div key={row.label} className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                <div style={{ flex: 1, fontWeight: 700 }}>{row.label}</div>
+                <div className="num" style={{ color: 'var(--muted)' }}>{row.before}</div>
+                <div style={{ color: 'var(--muted)' }}>→</div>
+                <div className="num" style={{ fontWeight: 800 }}>{row.after}</div>
+                <div className="num" style={{ minWidth: 48, textAlign: 'right', fontWeight: 800, color: d > 0 ? 'var(--green, #3ecf8e)' : d < 0 ? 'var(--red, #ef5b5b)' : 'var(--muted)' }}>{d > 0 ? `+${d}` : d}</div>
+              </div>
+            );
+          })}
+          <div style={{ display: 'flex', gap: 8, margin: '12px 0 18px' }}>
+            <div className="card" style={{ flex: 1, textAlign: 'center' }}><div className="label">Your rank</div><div className="num" style={{ fontSize: 20, fontWeight: 800 }}>#{impact.me.rankAfter}{impact.me.rankAfter < impact.me.rankBefore ? ' ↑' : impact.me.rankAfter > impact.me.rankBefore ? ' ↓' : ''}</div></div>
+            <div className="card" style={{ flex: 1, textAlign: 'center' }}><div className="label">Coins</div><div className="num" style={{ fontSize: 20, fontWeight: 800 }}>+{impact.coins}</div></div>
+            <div className="card" style={{ flex: 1, textAlign: 'center' }}><div className="label">Your stock</div><div className="num" style={{ fontSize: 20, fontWeight: 800 }}>{impact.me.after > impact.me.before ? '▲' : impact.me.after < impact.me.before ? '▼' : '='}</div></div>
+          </div>
+          <div style={{ color: 'var(--muted)', fontSize: 12, textAlign: 'center', marginBottom: 14 }}>{impact.them.name} can dispute it for 48 hours if it's wrong.</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => { setSubmitted(false); setImpact(null); setForm((f) => ({ ...f, result: '', score_a: '', score_b: '' })); }}>Log another</button>
+            <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleClose}>Done</button>
+          </div>
+        </div>
+      ) : submitted ? (
         <div style={{ textAlign: 'center', padding: '32px 0' }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>✓</div>
           <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>Logged!</div>
           <div style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 24 }}>
-            {step === 'log_match' ? 'Waiting for confirmation from your opponent.' : puzzlePosted.length > 1 ? `${puzzlePosted.length} puzzles posted.` : 'Puzzle posted.'}
+            {step === 'log_match' ? 'It counts now. Your opponent can dispute it for 48 hours.' : puzzlePosted.length > 1 ? `${puzzlePosted.length} puzzles posted.` : 'Puzzle posted.'}
           </div>
           {puzzlePosted.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>

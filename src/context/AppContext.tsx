@@ -456,7 +456,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const actions: Actions = {
     logMatch: async (params) => {
       if (IS_DEMO) {
-        demoStore.logMatch({
+        const logged = demoStore.logMatch({
           league_id: params.leagueId,
           game_id: params.gameId,
           player_a_id: demoStore.getCurrentUserId(),
@@ -469,9 +469,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           status: 'pending',
           logged_by: demoStore.getCurrentUserId(),
         });
+        // Matches count the moment they're logged; the opponent has 48 hours to dispute
+        demoStore.confirmMatch(logged.id);
       } else {
         const { rpcLogMatch } = await getSupabase();
-        await rpcLogMatch(params);
+        await rpcLogMatch(params); // rpc_log_match confirms on the server (migration 2026-11-18)
       }
     },
 

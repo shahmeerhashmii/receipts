@@ -218,6 +218,16 @@ export function MatchesScreen() {
                   Dispute
                 </button>
               )}
+              {isMyMatch && match.status === 'confirmed' && match.logged_by !== userId && (Date.now() - new Date(match.logged_at).getTime()) < 48 * 3600000 && (
+                <button
+                  className="btn btn-ghost"
+                  style={{ marginLeft: 'auto', height: 28, minHeight: 28, padding: '0 10px', fontSize: 12 }}
+                  onClick={() => { if (window.confirm('Dispute this result? It stops counting until an admin sorts it out.')) actions.disputeMatch(match.id); }}
+                  title="You have 48 hours to dispute a result someone else logged"
+                >
+                  Not right?
+                </button>
+              )}
               {match.status === 'confirmed' && (
                 <button
                   style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: '0 4px', fontSize: 13 }}
